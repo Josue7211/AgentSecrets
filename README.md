@@ -1,4 +1,4 @@
-# secret-broker
+# AgentSecrets
 
 Standalone, open-source, zero-trust secret broker for agents.
 

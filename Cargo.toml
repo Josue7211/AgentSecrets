@@ -3,7 +3,7 @@ name = "secret-broker"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Standalone zero-trust secret broker for OpenClaw and other agent runtimes"
+description = "AgentSecrets: standalone zero-trust secret broker for OpenClaw and other agent runtimes"
 
 [dependencies]
 axum = { version = "0.7", features = ["macros"] }
