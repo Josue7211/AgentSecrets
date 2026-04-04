@@ -2,7 +2,7 @@
 name = "secret-broker"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
 description = "AgentSecrets: standalone zero-trust secret broker for OpenClaw and other agent runtimes"
 
 [dependencies]
