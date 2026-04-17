@@ -8,7 +8,7 @@ Flow:
 
 1. `POST /v1/requests`
 2. Wait for approver decision if status is `pending_approval`
-3. Receive one-time `capability_token` from an isolated approval channel
+3. Receive one-time `capability_token` from the approver flow or approval response
 4. `POST /v1/execute`
 
 The current repo guarantees broker-level masked responses. It does **not** yet guarantee transcript-safe host behavior.
