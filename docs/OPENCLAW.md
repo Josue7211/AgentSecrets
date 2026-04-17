@@ -33,6 +33,6 @@ This doc describes the intended broker contract for OpenClaw-like host apps. It 
 ## Drop-in contract
 
 - Agent intent goes in as `secret_ref`, `action`, `target`, and optional `amount_cents`.
-- Broker returns masked metadata, request IDs, and single-use capability tokens.
+- Broker returns masked metadata, request IDs, and single-use capability tokens at request creation for auto-approved requests or in approval responses for pending ones.
 - Execution requires the one-time capability token.
 - Broker API responses do not return plaintext secret values.

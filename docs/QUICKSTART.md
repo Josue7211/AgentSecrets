@@ -36,7 +36,7 @@ scripts/healthcheck.sh http://127.0.0.1:4815
 
 1. Install the binary somewhere stable, such as `/usr/local/opt/secret-broker/bin/secret-broker`.
 2. Install [launchd/com.secret-broker.plist](../launchd/com.secret-broker.plist).
-3. Replace the placeholder environment values in the plist.
+3. Replace the placeholder environment values in the plist and ensure the DB setting uses a valid SQLite URL for this runtime.
 4. Load the service:
 
 ```bash
