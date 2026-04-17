@@ -7,7 +7,7 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Confirm the repo still builds: `cargo fmt --all -- --check`, `cargo check`, `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`
 - Confirm `LICENSE` is AGPL
 - Confirm `.env.example` is present and real secrets are not committed
-- Run `bash scripts/check-security-claims.sh`
+- Run the release claim-audit step once the claim-audit script lands
 - Confirm `docs/SECURITY_GUARANTEES.md` matches the current implementation line
 - Confirm docs distinguish broker-level guarantees from end-to-end host guarantees
 - Confirm release notes do not claim transcript-safe integrations unless backed by passing end-to-end tests
