@@ -1,61 +1,56 @@
 # Threat Model
 
-This broker is designed to keep plaintext secrets away from agent runtimes such as OpenClaw, Claude, and Codex.
+This repo is intended to evolve into an end-to-end zero-trust secret-use system. On the current line, it only guarantees broker-level no-plaintext-response behavior.
 
 ## Trust boundaries
 
 - Trusted:
   - The broker process
-  - The Bitwarden service running on the services VM
   - Human approval tooling
-  - The local SQLite database file on the broker host
+  - Operator-only audit and log stores
 - Untrusted:
   - Agent runtimes
   - OpenClaw or similar host apps
-  - Browser content loaded into any agent-facing UI
-  - Remote network paths outside the private network
+  - Browser content loaded into agent-facing UI
+  - Session transcripts
+  - Prompt history
+  - Agent-visible logs
 
-## Security goals
+## Security goals on the current line
 
-- Never expose plaintext secret values to the agent runtime
-- Keep secret-dependent actions behind explicit approval
-- Bind approvals to specific request context
-- Make capability tokens single-use and short-lived
-- Preserve an auditable trail of approvals and execution
+- Never expose plaintext secret values in broker API responses.
+- Keep secret-dependent actions behind explicit approval where policy requires it.
+- Bind approvals to specific request context.
+- Make capability tokens single-use and short-lived.
+- Preserve an auditable trail of approvals and execution.
 
-## What the broker must defend against
+## Security goals for future lines
 
-- Prompt injection that tries to coerce the agent into revealing secrets
-- Malicious or compromised OpenClaw plugins
-- Stolen or replayed capability tokens
-- Abuse of privileged secret-dependent actions
-- Direct access to Bitwarden from the agent side
-- Tampering with request history or audit records
+- Prevent plaintext secrets from entering agent-visible transcript surfaces.
+- Resolve opaque secret refs only on the trusted side.
+- Execute secret-dependent actions through trusted adapters rather than raw secret reveal.
+- Prove the above with node-to-node end-to-end tests.
 
-## What the broker does not try to solve
+## What this repo must defend against today
 
-- Host compromise of the machine running the broker
-- A fully compromised Bitwarden server
-- Malicious local administrators with direct disk access
-- Phishing of the human approver outside the broker workflow
-- Side channels from the user interface or browser extensions
+- Prompt injection that tries to coerce the broker flow into revealing secrets.
+- Stolen or replayed capability tokens.
+- Direct provider access from untrusted runtimes.
+- Tampering with request history or audit records.
+- Security overclaiming in docs and release notes.
+
+## What this repo does not solve yet
+
+- Transcript leakage in external host apps.
+- Secure password entry outside agent-visible chat surfaces.
+- Full trusted-side provider mediation.
+- Full trusted-side execution adapters.
 
 ## Operational rules
 
-- Keep the broker on localhost or a private network
-- Keep Bitwarden on the services VM
-- Give agent runtimes only the `client` key
-- Give approver tools only the `approver` key
-- Use `SECRET_BROKER_MODE=enforce` for real use
-- Keep allowlists and amount caps strict
-- Rotate keys through the admin API
-
-## Review focus
-
-When changing this repo, review:
-
-- Authentication and key rotation
-- Request approval and execution transitions
-- Any code that might return secret material or identifiers too early
-- Any browser or UI path that could expose credentials
-- Any deployment path that broadens network reach unexpectedly
+- Keep the broker on localhost or a private network.
+- Keep agent runtimes on the untrusted side of the boundary.
+- Give agent runtimes only the `client` key.
+- Give approver tools only the `approver` key.
+- Treat any raw secret typed into chat or prompt history as outside the current guarantee.
+- Reduce the claim before shipping if implementation and docs diverge.

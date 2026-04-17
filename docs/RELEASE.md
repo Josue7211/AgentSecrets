@@ -7,9 +7,10 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Confirm the repo still builds: `cargo fmt --all -- --check`, `cargo check`, `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`
 - Confirm `LICENSE` is Apache 2.0
 - Confirm `.env.example` is present and real secrets are not committed
-- Confirm docs describe the broker as a drop-in OpenClaw-compatible secret broker
-- Confirm the Bitwarden host stays separate from agent runtimes
-- Confirm the broker never returns plaintext secrets
+- Run `bash scripts/check-security-claims.sh`
+- Confirm `docs/SECURITY_GUARANTEES.md` matches the current implementation line
+- Confirm docs distinguish broker-level guarantees from end-to-end host guarantees
+- Confirm release notes do not claim transcript-safe integrations unless backed by passing end-to-end tests
 
 ## Linux release checklist
 
@@ -38,11 +39,11 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 
 Windows is supported, but it is not the primary release target.
 
-## OpenClaw compatibility checklist
+## Host integration checklist
 
-- Give OpenClaw the `client` key only
+- Give host runtimes the `client` key only
 - Give human approval tooling the `approver` key only
-- Keep OpenClaw on the untrusted side of the trust boundary
-- Use the broker for any `bw://...` handling
-- Do not let OpenClaw or the agent runtime see plaintext secrets
+- Keep host runtimes on the untrusted side of the trust boundary
+- Do not market host transcript safety unless a supported end-to-end test proves it
+- Do not let host runtimes or agent sessions see plaintext secrets
 - Keep target allowlists and amount caps conservative
