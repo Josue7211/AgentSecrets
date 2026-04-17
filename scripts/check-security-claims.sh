@@ -7,6 +7,8 @@ fail() {
 }
 
 [[ -f docs/SECURITY_GUARANTEES.md ]] || fail "missing docs/SECURITY_GUARANTEES.md"
+grep -Fq "Supported trust claim in the current repo state" docs/SECURITY_GUARANTEES.md || fail "SECURITY_GUARANTEES missing supported trust claim section"
+grep -Fq "AgentSecrets currently provides broker-level no-plaintext-response guarantees. It does **not** yet provide a complete end-to-end zero-trust secret-use system for external host apps." docs/SECURITY_GUARANTEES.md || fail "SECURITY_GUARANTEES missing canonical guarantee"
 
 grep -Fq "broker-level no-plaintext-response guarantees" README.md || fail "README missing narrowed guarantee"
 grep -Fq "does **not** yet provide a complete end-to-end transcript-safe zero-trust system" README.md || fail "README missing transcript-safe disclaimer"
