@@ -1,9 +1,15 @@
 # AgentSecrets
 
-Standalone, open-source, zero-trust secret broker for agents.
+Standalone, open-source secret broker for agent workflows.
 
 ## Goal
-Allow Claude, Codex, OpenClaw, and other agents to **use** secrets without receiving plaintext secret values.
+Allow Claude, Codex, OpenClaw, and other agents to request secret-dependent actions without broker API responses exposing plaintext secret values.
+
+## Security Guarantees
+
+The current line provides **broker-level no-plaintext-response guarantees**. It does **not** yet provide a complete end-to-end transcript-safe zero-trust system for external host apps.
+
+Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying on any security property.
 
 ## Production-grade defaults
 - Role-separated API keys (`client` and `approver`)
