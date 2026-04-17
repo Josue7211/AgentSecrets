@@ -24,12 +24,16 @@ require_file .github/workflows/ci.yml
 
 require_grep '## V3 ship gate' docs/RELEASE.md
 require_grep '## V3 release-note claims table' docs/RELEASE.md
+require_grep '## External host ship gate' docs/RELEASE.md
 require_grep '## V3 manual signoff' docs/RELEASE.md
 require_grep 'bash scripts/check-v3-ship-gate.sh' docs/RELEASE.md
+require_grep 'bash scripts/check-external-host-ship-gate.sh' docs/RELEASE.md
 require_grep 'bash scripts/run-openclaw-e2e.sh' docs/RELEASE.md
 require_grep 'If one required V3 line is missing, cut it from the V3 claim set or ship the release as preview only' docs/RELEASE.md
 
 require_grep 'This document is the V3 host-certification source of truth.' docs/SUPPORTED_HOSTS.md
+require_grep 'It is the only external-host ship gate input.' docs/SUPPORTED_HOSTS.md
+require_grep '## Freshness policy' docs/SUPPORTED_HOSTS.md
 require_grep 'Local helper harness (`src/bin/e2e-node.rs`) | shipped' docs/SUPPORTED_HOSTS.md
 require_grep 'OpenClaw-style HTTP host | shipped' docs/SUPPORTED_HOSTS.md
 require_grep 'bash scripts/run-openclaw-e2e.sh' docs/SUPPORTED_HOSTS.md
@@ -44,5 +48,6 @@ require_grep 'Read [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) for the cu
 require_grep 'Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only V3 host-certification source of truth.' README.md
 
 require_grep 'V3 ship gate summary' .github/workflows/ci.yml
+require_grep 'External host ship gate summary' .github/workflows/ci.yml
 
 echo "v3-ship-gate: ok"
