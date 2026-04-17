@@ -153,7 +153,7 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 - Any OpenClaw, Claude, Codex, or custom agent runtime should call broker instead of direct secret routes.
 - Agent runtimes should use the `client` key only.
 - Human approval apps, including iOS dispatch-style flows, should use the `approver` key.
-- Bitwarden stays on your services VM; broker mediates `bw://...` refs over the private network.
+- Bitwarden is intended to stay on your services VM; future target architecture may mediate `bw://...` refs over the private network.
 - See [docs/OPENCLAW.md](docs/OPENCLAW.md) for the generic OpenClaw drop-in contract.
 
 ## Platform support

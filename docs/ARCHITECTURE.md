@@ -14,12 +14,12 @@
 ## Current contract
 
 - Input: action intent and context
-- Output: allow or deny, masked metadata, and bounded capability material where the approval flow issues it
+- Output: allow or deny, masked metadata, and bounded capability material in current flows that issue it
 - No plaintext secret responses from broker APIs
 - No current guarantee of transcript-safe host behavior
 
 ## Modes
 
-- `off`: legacy passthrough mode for migration
+- `off`: compatibility / auto-approve mode for migration
 - `monitor`: records and auto-approves
 - `enforce`: approval plus policy required
