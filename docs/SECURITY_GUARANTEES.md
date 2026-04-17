@@ -11,6 +11,9 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Audit events exist for request lifecycle activity.
 - Trusted-side provider bridge contract exists in stub form behind config.
 - Provider resolution failures are masked and do not return plaintext.
+- One trusted execution adapter path exists in stub form behind config.
+- Unsupported adapter action or target context fails closed.
+- Adapter success and failure paths are audited without plaintext.
 
 ## Intended contract, not fully enforced end to end yet
 
@@ -23,7 +26,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 
 - Transcript-safe host integrations.
 - Chatbox or session-history redaction across external runtimes.
-- Browser-fill or signing adapters that consume secrets entirely on the trusted side.
+- Real browser-fill or signing adapters beyond the current stub contract.
 - Production Bitwarden mediation implemented in this repo.
 - End-to-end node-to-node verification across real host integrations.
 

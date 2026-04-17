@@ -21,6 +21,7 @@ Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying o
 - Masked-only execution responses
 - Audit log with hash-chain tamper evidence
 - Request-level rate limiting
+- One stub trusted execution adapter path for masked `password_fill`
 
 ## Security model
 - Agent runtimes are treated as untrusted.
@@ -35,6 +36,7 @@ Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying o
 
 ## Code layout
 - [src/lib.rs](src/lib.rs): config, DB init, router wiring, runtime entrypoint
+- [src/adapter.rs](src/adapter.rs): trusted execution adapter contract and stub runtime
 - [src/handlers/health.rs](src/handlers/health.rs): liveness and readiness endpoints
 - [src/handlers/requests.rs](src/handlers/requests.rs): request lifecycle and audit listing
 - [src/handlers/execution.rs](src/handlers/execution.rs): capability-guarded execution path
@@ -71,6 +73,7 @@ Optional:
 - `SECRET_BROKER_MAX_AMOUNT_CENTS`
 - `SECRET_BROKER_CAPABILITY_TTL_SECONDS`
 - `SECRET_BROKER_PROVIDER_BRIDGE_MODE=off|stub`
+- `SECRET_BROKER_EXECUTION_ADAPTER_MODE=off|stub`
 - `SECRET_BROKER_REQUEST_TTL_SECONDS`
 - `SECRET_BROKER_RATE_LIMIT_PER_MINUTE`
 
@@ -87,6 +90,9 @@ Startup behavior:
 - Provider bridge modes:
   - `off`: default, no trusted-side provider resolution path
   - `stub`: enables the Loop 2 stub Bitwarden provider bridge for contract verification
+- Execution adapter modes:
+  - `off`: default, no trusted-side secret-consumption path
+  - `stub`: enables the Loop 3 stub `password_fill` adapter for contract verification on login targets
 
 ## Run
 ```bash
@@ -153,7 +159,7 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 1. Agent creates request (`POST /v1/requests`).
 2. Approver approves (`POST /v1/requests/:id/approve`) and receives one-time capability token.
 3. Agent executes with capability (`POST /v1/execute`).
-4. Broker returns masked execution result only.
+4. Broker returns masked execution result only, including masked adapter summaries when the trusted adapter stub is enabled.
 5. Any transcript or chatbox safety claim still depends on the host integration, which is not yet fully implemented in this repo.
 
 ## Integration notes
@@ -162,7 +168,8 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 - Human approval apps, including iOS dispatch-style flows, should use the `approver` key.
 - Bitwarden is intended to stay on your services VM; future target architecture may mediate `bw://...` refs over the private network.
 - The repo now has a trusted-side provider boundary in stub form.
-- The repo still does **not** claim production Bitwarden mediation or trusted execution adapters.
+- The repo now has one trusted-side execution adapter path in stub form for masked `password_fill`.
+- The repo still does **not** claim production Bitwarden mediation, real browser automation, or transcript-safe host execution.
 - See [docs/OPENCLAW.md](docs/OPENCLAW.md) for the generic OpenClaw drop-in contract.
 
 ## Platform support

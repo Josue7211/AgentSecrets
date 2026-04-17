@@ -1,0 +1,98 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-17T13:16:52-04:00",
+  "branch": "roadmap/zero-trust-v2-v4-hardening",
+  "status": "paused",
+  "workstream": "zero-trust roadmap execution handoff",
+  "current_position": {
+    "completed_upstream_commit": "543ed8b",
+    "completed_upstream_scope": [
+      "V2 Loop 1 secret ingress lockdown",
+      "V2 Loop 2 provider isolation contract"
+    ],
+    "current_session_scope": [
+      "added per-loop roadmap plan files for remaining loops",
+      "added detailed spec pack for remaining loops",
+      "implemented V2 Loop 3 execution adapter containment",
+      "updated handoff artifacts to route next work into V2 Loop 4"
+    ],
+    "next_loop": "V2 Loop 4",
+    "next_entrypoint": "docs/superpowers/plans/2026-04-17-v2-loop-4-capability-and-approval-hardening.md"
+  },
+  "completed_work": [
+    {
+      "id": 1,
+      "name": "Recovered repo handoff and verified branch state",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "name": "Confirmed Loop 1 and Loop 2 were already implemented and green at commit 543ed8b",
+      "status": "done"
+    },
+    {
+      "id": 3,
+      "name": "Added remaining per-loop plan docs for V2 Loop 3-6, V3 Loop 0-4, and V4 Loop 0-5",
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "name": "Added detailed remaining-loop spec pack",
+      "status": "done"
+    },
+    {
+      "id": 5,
+      "name": "Implemented V2 Loop 3 trusted execution adapter containment with masked stub password_fill path",
+      "status": "done"
+    },
+    {
+      "id": 6,
+      "name": "Verified Loop 3 with tests, fmt, and clippy",
+      "status": "done"
+    }
+  ],
+  "remaining_work": [
+    {
+      "id": 7,
+      "name": "Start implementation in roadmap order with V2 Loop 4 using TDD",
+      "status": "not_started"
+    },
+    {
+      "id": 8,
+      "name": "Tighten capability binding and approval payload semantics without skipping ahead to Loop 5",
+      "status": "not_started"
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Do not skip roadmap order",
+      "rationale": "User explicitly required following the roadmap loop by loop."
+    },
+    {
+      "decision": "Store handoff artifacts at repo root",
+      "rationale": "This repo has no .planning workspace, so root-level handoff files remain the least ambiguous resume point."
+    },
+    {
+      "decision": "Keep Loop 3 claim narrow",
+      "rationale": "The repo now supports one stub trusted execution adapter path only; it still does not claim real browser automation or transcript-safe host execution."
+    }
+  ],
+  "blockers": [],
+  "human_actions_pending": [],
+  "background_processes": [],
+  "uncommitted_files": [],
+  "next_action": "Open docs/superpowers/plans/2026-04-17-v2-loop-4-capability-and-approval-hardening.md and begin Loop 4 in strict TDD order.",
+  "context_notes": "Repo truth after this session: V2 Loop 1 and Loop 2 were already in place at 543ed8b. This session added the remaining roadmap docs and implemented V2 Loop 3 with a trusted execution adapter stub, fail-closed adapter dispatch, adapter health, and matching docs updates. The clean continuation path is V2 Loop 4 only.",
+  "recommended_first_tests": [
+    "execute_rejects_action_mismatch",
+    "execute_rejects_target_mismatch",
+    "capability_expiry_is_enforced",
+    "approval_payload_is_masked_and_truthful"
+  ],
+  "verification_ran": [
+    "cargo test adapter::tests -- --nocapture",
+    "cargo test -- --nocapture",
+    "cargo fmt --all -- --check",
+    "cargo clippy --all-targets --all-features -- -D warnings"
+  ]
+}

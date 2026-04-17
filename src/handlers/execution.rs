@@ -6,6 +6,7 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
+    adapter::{AdapterErrorCode, AdapterRequest, TrustedExecutionAdapter},
     audit::append_audit,
     auth::{enforce_rate_limit, require_client_or_approver},
     err, now_unix, ok,
@@ -125,7 +126,7 @@ pub(crate) async fn execute_request(
         }
     }
 
-    let provider_result = match state.cfg.provider_bridge_mode {
+    let provider_resolution = match state.cfg.provider_bridge_mode {
         crate::provider::ProviderBridgeMode::Off => None,
         _ => {
             let resolved = match state.provider.resolve_for_use(&secret_ref).await {
@@ -170,11 +171,95 @@ pub(crate) async fn execute_request(
             )
             .await;
 
-            Some(json!({
-                "name": resolved.provider_name,
-                "resolution": "resolved",
-                "secret_ref_masked": resolved.secret_ref_masked,
-            }))
+            Some(resolved)
+        }
+    };
+
+    let provider_result = provider_resolution.as_ref().map(|resolved| {
+        json!({
+            "name": resolved.provider_name,
+            "resolution": "resolved",
+            "secret_ref_masked": resolved.secret_ref_masked,
+        })
+    });
+
+    let adapter_result = match state.cfg.execution_adapter_mode {
+        crate::adapter::ExecutionAdapterMode::Off => None,
+        _ => {
+            let Some(resolved) = provider_resolution else {
+                let _ = append_audit(
+                    &state.db,
+                    &auth_ctx.key_fingerprint,
+                    "request.adapter_failed",
+                    Some(&body.id),
+                    &json!({ "code": "adapter_provider_missing" }),
+                )
+                .await;
+
+                return Err(err(
+                    StatusCode::BAD_GATEWAY,
+                    "adapter_provider_missing",
+                    "Trusted execution adapter could not run",
+                ));
+            };
+
+            let adapter_request = AdapterRequest {
+                action: &action,
+                target: &target,
+            };
+
+            match state.adapter.execute(adapter_request, resolved).await {
+                Ok(masked) => {
+                    let _ = append_audit(
+                        &state.db,
+                        &auth_ctx.key_fingerprint,
+                        "request.adapter_succeeded",
+                        Some(&body.id),
+                        &json!({
+                            "adapter": masked.adapter,
+                            "mode": match state.cfg.execution_adapter_mode {
+                                crate::adapter::ExecutionAdapterMode::Off => "off",
+                                crate::adapter::ExecutionAdapterMode::Stub => "stub",
+                            },
+                        }),
+                    )
+                    .await;
+
+                    Some(
+                        serde_json::to_value(masked)
+                            .unwrap_or_else(|_| json!({"adapter": "unknown"})),
+                    )
+                }
+                Err(adapter_err) => {
+                    let (status, code) = match adapter_err.code {
+                        AdapterErrorCode::Disabled => (StatusCode::BAD_GATEWAY, "adapter_disabled"),
+                        AdapterErrorCode::UnsupportedAction => {
+                            (StatusCode::BAD_REQUEST, "adapter_action_unsupported")
+                        }
+                        AdapterErrorCode::TargetMismatch => {
+                            (StatusCode::BAD_REQUEST, "adapter_target_mismatch")
+                        }
+                        AdapterErrorCode::Unavailable => {
+                            (StatusCode::BAD_GATEWAY, "adapter_unavailable")
+                        }
+                    };
+
+                    let _ = append_audit(
+                        &state.db,
+                        &auth_ctx.key_fingerprint,
+                        "request.adapter_failed",
+                        Some(&body.id),
+                        &json!({ "code": code }),
+                    )
+                    .await;
+
+                    return Err(err(
+                        status,
+                        code,
+                        "Trusted execution adapter rejected request",
+                    ));
+                }
+            }
         }
     };
 
@@ -186,6 +271,7 @@ pub(crate) async fn execute_request(
             "target": target,
         },
         "provider": provider_result,
+        "adapter": adapter_result,
         "note": "no plaintext secrets returned",
     });
 

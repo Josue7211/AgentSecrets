@@ -1,3 +1,4 @@
+mod adapter;
 mod audit;
 mod auth;
 mod handlers;
@@ -27,6 +28,7 @@ struct AppState {
     db: Arc<SqlitePool>,
     cfg: Arc<Config>,
     provider: Arc<provider::ProviderRuntime>,
+    adapter: Arc<adapter::ExecutionAdapterRuntime>,
     rate_state: Arc<Mutex<HashMap<String, Vec<i64>>>>,
 }
 
@@ -43,6 +45,7 @@ struct Config {
     db_url: String,
     mode: BrokerMode,
     provider_bridge_mode: provider::ProviderBridgeMode,
+    execution_adapter_mode: adapter::ExecutionAdapterMode,
     client_api_key: String,
     approver_api_key: String,
     capability_ttl_seconds: i64,
@@ -244,6 +247,10 @@ fn config_from_env() -> Config {
     let provider_bridge_mode = provider::parse_provider_bridge_mode(
         &std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_MODE").unwrap_or_else(|_| "off".to_string()),
     );
+    let execution_adapter_mode = adapter::parse_execution_adapter_mode(
+        &std::env::var("SECRET_BROKER_EXECUTION_ADAPTER_MODE")
+            .unwrap_or_else(|_| "off".to_string()),
+    );
 
     let client_api_key = std::env::var("SECRET_BROKER_CLIENT_API_KEY")
         .or_else(|_| std::env::var("SECRET_BROKER_API_KEY"))
@@ -285,6 +292,7 @@ fn config_from_env() -> Config {
         db_url,
         mode,
         provider_bridge_mode,
+        execution_adapter_mode,
         client_api_key,
         approver_api_key,
         capability_ttl_seconds,
@@ -384,6 +392,10 @@ pub async fn run() -> anyhow::Result<()> {
             provider::ProviderBridgeMode::Off => provider::ProviderRuntime::off(),
             provider::ProviderBridgeMode::Stub => provider::ProviderRuntime::stub(),
         }),
+        adapter: Arc::new(match cfg.execution_adapter_mode {
+            adapter::ExecutionAdapterMode::Off => adapter::ExecutionAdapterRuntime::off(),
+            adapter::ExecutionAdapterMode::Stub => adapter::ExecutionAdapterRuntime::stub(),
+        }),
         rate_state: Arc::new(Mutex::new(HashMap::new())),
     };
 
@@ -413,12 +425,14 @@ mod tests {
     fn test_config(
         db_url: String,
         provider_bridge_mode: crate::provider::ProviderBridgeMode,
+        execution_adapter_mode: crate::adapter::ExecutionAdapterMode,
     ) -> Arc<Config> {
         Arc::new(Config {
             bind: "127.0.0.1:0".to_string(),
             db_url,
             mode: BrokerMode::Enforce,
             provider_bridge_mode,
+            execution_adapter_mode,
             client_api_key: "test-client-key-123456".to_string(),
             approver_api_key: "test-approver-key-abcdef".to_string(),
             capability_ttl_seconds: 60,
@@ -429,15 +443,20 @@ mod tests {
         })
     }
 
-    async fn setup_app_with_provider_mode(
+    async fn setup_app_with_modes(
         provider_bridge_mode: crate::provider::ProviderBridgeMode,
+        adapter_mode: &str,
     ) -> anyhow::Result<(Router, Arc<Config>)> {
         let db_file = NamedTempFile::new()?;
         let db_path = db_file.path().to_string_lossy().to_string();
         let db_url = format!("sqlite://{}?mode=rwc", db_path);
         std::mem::forget(db_file);
 
-        let cfg = test_config(db_url.clone(), provider_bridge_mode);
+        let cfg = test_config(
+            db_url.clone(),
+            provider_bridge_mode,
+            crate::adapter::parse_execution_adapter_mode(adapter_mode),
+        );
         let pool = connect_sqlite(&db_url).await?;
         init_db(&pool).await?;
         crate::keys::ensure_api_keys(&pool, &cfg).await?;
@@ -451,9 +470,23 @@ mod tests {
                     crate::provider::ProviderRuntime::stub()
                 }
             }),
+            adapter: Arc::new(match cfg.execution_adapter_mode {
+                crate::adapter::ExecutionAdapterMode::Off => {
+                    crate::adapter::ExecutionAdapterRuntime::off()
+                }
+                crate::adapter::ExecutionAdapterMode::Stub => {
+                    crate::adapter::ExecutionAdapterRuntime::stub()
+                }
+            }),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
         };
         Ok((build_router(state), cfg))
+    }
+
+    async fn setup_app_with_provider_mode(
+        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+    ) -> anyhow::Result<(Router, Arc<Config>)> {
+        setup_app_with_modes(provider_bridge_mode, "off").await
     }
 
     async fn setup_app() -> anyhow::Result<(Router, Arc<Config>)> {
@@ -494,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn health_reports_provider_bridge_mode() -> anyhow::Result<()> {
         let (app, _cfg) =
-            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
 
         let req = Request::builder()
             .method("GET")
@@ -506,13 +539,15 @@ mod tests {
         let body = json_response(resp).await;
         assert_eq!(body["provider"]["mode"], "stub");
         assert_eq!(body["provider"]["provider"], "bitwarden_stub");
+        assert_eq!(body["adapter"]["mode"], "stub");
+        assert_eq!(body["adapter"]["adapter"], "password_fill_stub");
         Ok(())
     }
 
     #[tokio::test]
     async fn readyz_remains_green_when_stub_provider_is_enabled() -> anyhow::Result<()> {
         let (app, _cfg) =
-            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
 
         let req = Request::builder()
             .method("GET")
@@ -589,9 +624,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_uses_stub_provider_without_leaking_plaintext() -> anyhow::Result<()> {
+    async fn execute_uses_stub_adapter_without_leaking_plaintext() -> anyhow::Result<()> {
         let (app, cfg) =
-            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
         let id = create_password_request(&app, &cfg).await;
 
         let approve_req = Request::builder()
@@ -623,9 +658,132 @@ mod tests {
         let resp = app.clone().oneshot(exec_req).await?;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = json_response(resp).await;
-        assert_eq!(body["data"]["result"]["provider"]["name"], "bitwarden_stub");
-        assert_eq!(body["data"]["result"]["provider"]["resolution"], "resolved");
+        assert_eq!(
+            body["data"]["result"]["adapter"]["adapter"],
+            "password_fill_stub"
+        );
+        assert_eq!(body["data"]["result"]["adapter"]["outcome"], "filled");
+        assert_eq!(
+            body["data"]["result"]["adapter"]["target"],
+            "https://example.com/login"
+        );
         assert!(!body.to_string().contains("stub-secret-material"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_unsupported_adapter_actions() -> anyhow::Result<()> {
+        let (app, cfg) =
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "clipboard_copy",
+                    "secret_ref": "bw://vault/item/login",
+                    "action": "copy_secret",
+                    "target": "https://example.com/login",
+                    "reason": "unsupported action test"
+                })
+                .to_string(),
+            ))?;
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_json = json_response(create_resp).await;
+        let id = create_json["data"]["id"].as_str().expect("id").to_string();
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "copy_secret",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "adapter_action_unsupported");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_adapter_target_mismatch() -> anyhow::Result<()> {
+        let (app, cfg) =
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": "bw://vault/item/login",
+                    "action": "password_fill",
+                    "target": "https://example.com/profile",
+                    "reason": "unsupported target test"
+                })
+                .to_string(),
+            ))?;
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_json = json_response(create_resp).await;
+        let id = create_json["data"]["id"].as_str().expect("id").to_string();
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://example.com/profile"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "adapter_target_mismatch");
         Ok(())
     }
 
