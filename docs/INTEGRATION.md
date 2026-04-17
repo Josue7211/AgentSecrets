@@ -1,19 +1,25 @@
 # Integration Guide
 
-## 1) Claude / Codex / OpenClaw client pattern
+## Current supported contract
 
-Use only the **client key**.
+Use only the **client key** from agent or host runtimes.
 
 Flow:
+
 1. `POST /v1/requests`
 2. Wait for approver decision if status is `pending_approval`
-3. Receive one-time `capability_token` from approver channel
+3. Receive one-time `capability_token` from an isolated approval channel
 4. `POST /v1/execute`
 
-Never request raw secret values from the broker.
-For Bitwarden-backed refs, the broker should resolve `bw://...` against the Bitwarden service running on your services VM, not from local disk.
+The current repo guarantees broker-level masked responses. It does **not** yet guarantee transcript-safe host behavior.
 
-## 2) iOS approval app pattern
+## Required integration rule
+
+- Never request raw secret values from the broker.
+- Treat opaque refs such as `bw://...` as the intended contract.
+- Do not put plaintext passwords into prompts, chat boxes, or task memory.
+
+## Approval app pattern
 
 Use only the **approver key**.
 
@@ -21,24 +27,25 @@ Use only the **approver key**.
 - Deny: `POST /v1/requests/:id/deny`
 
 Suggested approval payload shown to user:
+
 - action
 - target
 - amount
 - masked secret ref
 
-## 3) OpenClaw / host app integration
+## Host-app integration rule
 
 Treat any OpenClaw-like host app as an untrusted runtime:
-- Give OpenClaw only the **client key**.
-- Never give OpenClaw approver key.
-- Restrict OpenClaw network egress so it can only reach broker + allowed APIs.
-- If OpenClaw needs Bitwarden-backed secrets, route only through the broker; do not let it talk directly to the Bitwarden host.
-- OpenClaw can run on Linux, macOS, or Windows as long as it can reach the broker over HTTP.
-- The broker itself is cross-platform; only the helper deployment examples are OS-specific.
 
-## 4) Recommended rollout
+- Give the host app only the **client** key.
+- Never give the host app the approver key.
+- Restrict host egress so it can only reach the broker and allowed APIs.
+- Do not let the host app talk directly to Bitwarden.
+- Do not claim transcript safety unless an end-to-end test proves it for that host.
+
+## Recommended rollout
 
 1. `SECRET_BROKER_MODE=monitor`
-2. Observe requests and tune allowlist/caps
+2. Observe requests and tune allowlist and caps
 3. `SECRET_BROKER_MODE=enforce`
-4. Add iOS push approvals for high-risk actions
+4. Add trusted provider and execution boundaries before expanding security claims

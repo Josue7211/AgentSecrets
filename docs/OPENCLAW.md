@@ -1,15 +1,15 @@
 # OpenClaw Integration
 
-This broker is intended to be a drop-in secrets layer for any OpenClaw deployment that can make HTTP requests. Linux and macOS are the primary host platforms; Windows is supported but secondary.
+This doc describes the intended broker contract for OpenClaw-like host apps. It does not certify current end-to-end transcript safety.
 
 ## What OpenClaw should do
 
 - Talk only to the broker API.
-- Use the `client` key for agent runtime requests.
-- Never embed Bitwarden credentials in OpenClaw.
-- Never let OpenClaw read plaintext secret values.
-- Route any Bitwarden-backed secret use through the broker over the private network.
-- Do not require OpenClaw to know where Bitwarden lives beyond the broker endpoint.
+- Use the `client` key for runtime requests.
+- Never embed provider credentials in OpenClaw.
+- Never request raw secret values from the broker.
+- Treat opaque secret refs such as `bw://...` as the supported contract.
+- Stay on the untrusted side of the trust boundary.
 
 ## Minimum setup
 
@@ -22,25 +22,17 @@ This broker is intended to be a drop-in secrets layer for any OpenClaw deploymen
    - `POST /v1/requests/:id/approve`
    - `POST /v1/requests/:id/deny`
    - `GET /v1/audit`
-4. Keep Bitwarden on the services VM and let the broker mediate `bw://...` refs.
+4. Keep provider systems on the trusted side.
+
+## What this doc does not claim
+
+- It does not claim transcript-safe host behavior.
+- It does not claim secure password entry through chat surfaces.
+- It does not claim a finished trusted-side browser-fill adapter.
 
 ## Drop-in contract
-
-Any OpenClaw setup should be able to work with this contract:
 
 - Agent intent goes in as `secret_ref`, `action`, `target`, and optional `amount_cents`.
 - Broker returns masked metadata, request IDs, and single-use capability tokens.
 - Execution requires the one-time capability token.
-- Raw secret values never leave the trusted broker side.
-
-## Host platforms
-
-- Linux hosts can use the `systemd` example files.
-- macOS hosts can use the `launchd` plist example.
-- Windows hosts can run the broker as a service or as a scheduled startup task, as long as the broker endpoint is reachable over HTTPS or localhost.
-
-## If your OpenClaw install is more complex
-
-- If OpenClaw has multiple runtimes, give each runtime only the `client` key.
-- If you want iOS or dispatch-style approvals, wire the approver channel to the same broker endpoints.
-- If OpenClaw is remote, keep the broker on the private network and lock down egress so only the broker and approved APIs are reachable.
+- Broker API responses do not return plaintext secret values.
