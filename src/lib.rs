@@ -856,6 +856,16 @@ mod tests {
         );
     }
 
+    fn assert_no_leaks(surface: &str, secret: &str, forbidden_values: &[&str]) {
+        assert_secret_free(surface, secret);
+        for value in forbidden_values {
+            assert!(
+                !surface.contains(value),
+                "forbidden value leaked into captured surface: {value}\n{surface}"
+            );
+        }
+    }
+
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     }
@@ -919,8 +929,88 @@ mod tests {
         Ok(())
     }
 
+    fn write_redacted_artifacts(
+        artifact_dir: &Path,
+        entries: &[(&str, &str)],
+        sensitive_values: &[&str],
+    ) -> anyhow::Result<()> {
+        for (name, content) in entries {
+            write_redacted_artifact(&artifact_dir.join(name), content, sensitive_values)?;
+        }
+        Ok(())
+    }
+
     fn host_command(prefix: &str, command: &str) -> String {
         format!("{prefix}{command}")
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum HarnessLane {
+        Standard,
+        OpenClaw,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum NodeOutputMode {
+        Raw,
+        Redacted,
+    }
+
+    impl HarnessLane {
+        fn command_prefix(self) -> &'static str {
+            match self {
+                HarnessLane::Standard => "",
+                HarnessLane::OpenClaw => "openclaw-",
+            }
+        }
+
+        fn output_mode(self) -> NodeOutputMode {
+            match self {
+                HarnessLane::Standard => NodeOutputMode::Raw,
+                HarnessLane::OpenClaw => NodeOutputMode::Redacted,
+            }
+        }
+
+        async fn run(
+            self,
+            args: &[String],
+            envs: &[(&str, &str)],
+        ) -> anyhow::Result<NodeInvocation> {
+            run_e2e_node_invocation(args, envs, self.output_mode()).await
+        }
+    }
+
+    struct OpenClawResultSidecar {
+        file: NamedTempFile,
+    }
+
+    impl OpenClawResultSidecar {
+        fn new() -> anyhow::Result<Self> {
+            Ok(Self {
+                file: NamedTempFile::new().context("failed to allocate openclaw result sidecar")?,
+            })
+        }
+
+        fn path(&self) -> &Path {
+            self.file.path()
+        }
+
+        fn write_raw(&self, raw: &str) -> anyhow::Result<()> {
+            fs::write(self.path(), raw)?;
+            Ok(())
+        }
+
+        fn read_json(&self) -> anyhow::Result<Value> {
+            let result_text = fs::read_to_string(self.path())?;
+            serde_json::from_str(&result_text).context("openclaw result decode failed")
+        }
+
+        fn cleanup(self) -> anyhow::Result<()> {
+            self.file
+                .close()
+                .context("failed to remove openclaw result sidecar")?;
+            Ok(())
+        }
     }
 
     fn parse_result_line(stdout: &str) -> anyhow::Result<Value> {
@@ -998,13 +1088,10 @@ mod tests {
         Ok(())
     }
 
-    async fn run_e2e_node(args: &[String]) -> anyhow::Result<NodeInvocation> {
-        run_e2e_node_with_env(args, &[]).await
-    }
-
-    async fn run_e2e_node_with_env(
+    async fn run_e2e_node_invocation(
         args: &[String],
         envs: &[(&str, &str)],
+        output_mode: NodeOutputMode,
     ) -> anyhow::Result<NodeInvocation> {
         ensure_e2e_binaries_built()?;
 
@@ -1013,6 +1100,25 @@ mod tests {
         for (key, value) in envs {
             command.env(key, value);
         }
+
+        match output_mode {
+            NodeOutputMode::Raw => {}
+            NodeOutputMode::Redacted => {
+                command.env("SECRET_BROKER_E2E_RESULT_MODE", "redacted");
+            }
+        }
+
+        let sidecar = match output_mode {
+            NodeOutputMode::Raw => None,
+            NodeOutputMode::Redacted => {
+                let sidecar = OpenClawResultSidecar::new()?;
+                command.env(
+                    "SECRET_BROKER_E2E_RESULT_PATH",
+                    sidecar.path().to_string_lossy().to_string(),
+                );
+                Some(sidecar)
+            }
+        };
 
         let output = command
             .output()
@@ -1026,12 +1132,27 @@ mod tests {
             anyhow::bail!("e2e-node failed\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
 
-        let result = parse_result_line(&stdout)?;
+        let result = match sidecar {
+            Some(sidecar) => {
+                let result = sidecar.read_json()?;
+                sidecar.cleanup()?;
+                result
+            }
+            None => parse_result_line(&stdout)?,
+        };
+
         Ok(NodeInvocation {
             stdout,
             stderr,
             result,
         })
+    }
+
+    async fn run_e2e_node_with_env(
+        args: &[String],
+        envs: &[(&str, &str)],
+    ) -> anyhow::Result<NodeInvocation> {
+        run_e2e_node_invocation(args, envs, NodeOutputMode::Raw).await
     }
 
     async fn run_e2e_node_expect_failure(
@@ -1073,155 +1194,119 @@ mod tests {
         })
     }
 
-    async fn run_openclaw_e2e_node_with_env(
-        args: &[String],
-        envs: &[(&str, &str)],
-    ) -> anyhow::Result<NodeInvocation> {
-        ensure_e2e_binaries_built()?;
+    #[derive(Clone, Copy)]
+    struct NodeToNodeScenarioSpec<'a> {
+        label: &'a str,
+        request_type: &'a str,
+        action: &'a str,
+        target: &'a str,
+        reason: &'a str,
+        lane: HarnessLane,
+        envs: &'a [(&'a str, &'a str)],
+    }
 
-        let result_file = NamedTempFile::new_in("target/e2e-artifacts")
-            .context("failed to allocate openclaw result sidecar")?;
-        let result_path = result_file.path().to_path_buf();
-
-        let mut command = Command::new(e2e_binary_path("e2e-node"));
-        command.current_dir(repo_root()).args(args);
-        command.env("SECRET_BROKER_E2E_RESULT_MODE", "redacted");
-        command.env(
-            "SECRET_BROKER_E2E_RESULT_PATH",
-            result_path.to_string_lossy().to_string(),
-        );
-        for (key, value) in envs {
-            command.env(key, value);
-        }
-
-        let output = command
-            .output()
-            .await
-            .context("failed to run e2e-node helper")?;
-
-        let stdout = String::from_utf8(output.stdout).context("stdout must be utf-8")?;
-        let stderr = String::from_utf8(output.stderr).context("stderr must be utf-8")?;
-
-        if !output.status.success() {
-            anyhow::bail!("e2e-node failed\nstdout:\n{stdout}\nstderr:\n{stderr}");
-        }
-
-        let result_text = fs::read_to_string(&result_path).with_context(|| {
-            format!(
-                "missing openclaw result sidecar at {}",
-                result_path.display()
-            )
-        })?;
-        let result = serde_json::from_str(&result_text).context("openclaw result decode failed")?;
-
-        drop(result_file);
-
-        Ok(NodeInvocation {
-            stdout,
-            stderr,
-            result,
-        })
+    #[derive(Clone, Copy)]
+    struct TrustedInputScenarioSpec<'a> {
+        label: &'a str,
+        reason: &'a str,
+        lane: HarnessLane,
+        envs: &'a [(&'a str, &'a str)],
     }
 
     async fn run_node_to_node_scenario(
-        label: &str,
-        execute_action: &str,
-        execute_target: &str,
-        command_prefix: &str,
+        spec: NodeToNodeScenarioSpec<'_>,
     ) -> anyhow::Result<NodeToNodeOutcome> {
-        let artifact_dir = new_artifact_dir(label)?;
+        let artifact_dir = new_artifact_dir(spec.label)?;
         let fixture_secret = "stub-secret-material".to_string();
 
         let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
 
-        let create = run_e2e_node(&[
-            host_command(command_prefix, "create"),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--request-type".to_string(),
-            "password_fill".to_string(),
-            "--secret-ref".to_string(),
-            "bw://vault/item/login".to_string(),
-            "--action".to_string(),
-            "password_fill".to_string(),
-            "--target".to_string(),
-            "https://example.com/login".to_string(),
-            "--reason".to_string(),
-            "loop 5 happy path".to_string(),
-        ])
-        .await?;
+        let create = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "create"),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--request-type".to_string(),
+                    spec.request_type.to_string(),
+                    "--secret-ref".to_string(),
+                    "bw://vault/item/login".to_string(),
+                    "--action".to_string(),
+                    spec.action.to_string(),
+                    "--target".to_string(),
+                    spec.target.to_string(),
+                    "--reason".to_string(),
+                    spec.reason.to_string(),
+                ],
+                spec.envs,
+            )
+            .await?;
         let request_id = create.result["id"]
             .as_str()
             .context("create result missing request id")?
             .to_string();
 
-        let approve = run_e2e_node(&[
-            host_command(command_prefix, "approve"),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-approver-key-1234567890".to_string(),
-            "--id".to_string(),
-            request_id.clone(),
-        ])
-        .await?;
+        let approve = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "approve"),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-approver-key-1234567890".to_string(),
+                    "--id".to_string(),
+                    request_id.clone(),
+                ],
+                spec.envs,
+            )
+            .await?;
         let capability_token = approve.result["capability_token"]
             .as_str()
             .context("approve result missing capability token")?
             .to_string();
 
-        let execute = run_e2e_node(&[
-            host_command(command_prefix, "execute"),
-            "--broker-url".to_string(),
-            broker_url,
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--id".to_string(),
-            request_id.clone(),
-            "--capability-token".to_string(),
-            capability_token.clone(),
-            "--action".to_string(),
-            execute_action.to_string(),
-            "--target".to_string(),
-            execute_target.to_string(),
-        ])
-        .await?;
+        let execute = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "execute"),
+                    "--broker-url".to_string(),
+                    broker_url,
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--id".to_string(),
+                    request_id.clone(),
+                    "--capability-token".to_string(),
+                    capability_token.clone(),
+                    "--action".to_string(),
+                    spec.action.to_string(),
+                    "--target".to_string(),
+                    spec.target.to_string(),
+                ],
+                spec.envs,
+            )
+            .await?;
 
         let create_result = create.result.clone();
         let approve_result = approve.result.clone();
         let execute_result = execute.result.clone();
+        let artifact_sensitives = [fixture_secret.as_str(), capability_token.as_str()];
 
-        write_redacted_artifact(
-            &artifact_dir.join("client.stdout.log"),
-            &create.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("client.stderr.log"),
-            &create.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stdout.log"),
-            &approve.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stderr.log"),
-            &approve.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stdout.log"),
-            &execute.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stderr.log"),
-            &execute.stderr,
-            &[&fixture_secret, &capability_token],
+        write_redacted_artifacts(
+            &artifact_dir,
+            &[
+                ("client.stdout.log", create.stdout.as_str()),
+                ("client.stderr.log", create.stderr.as_str()),
+                ("approver.stdout.log", approve.stdout.as_str()),
+                ("approver.stderr.log", approve.stderr.as_str()),
+                ("execute.stdout.log", execute.stdout.as_str()),
+                ("execute.stderr.log", execute.stderr.as_str()),
+            ],
+            &artifact_sensitives,
         )?;
         write_redacted_artifact(
             &artifact_dir.join("summary.json"),
@@ -1233,7 +1318,7 @@ mod tests {
                 "execute": execute_result
             })
             .to_string(),
-            &[&fixture_secret, &capability_token],
+            &artifact_sensitives,
         )?;
 
         stop_broker(broker_child).await?;
@@ -1256,48 +1341,61 @@ mod tests {
     }
 
     async fn run_node_to_node_happy_path() -> anyhow::Result<NodeToNodeOutcome> {
-        run_node_to_node_scenario(
-            "node-to-node-happy-path",
-            "password_fill",
-            "https://example.com/login",
-            "",
-        )
+        run_node_to_node_scenario(NodeToNodeScenarioSpec {
+            label: "node-to-node-happy-path",
+            request_type: "password_fill",
+            action: "password_fill",
+            target: "https://example.com/login",
+            reason: "loop 5 happy path",
+            lane: HarnessLane::Standard,
+            envs: &[],
+        })
         .await
     }
 
     async fn run_node_to_node_target_mismatch() -> anyhow::Result<NodeToNodeOutcome> {
-        run_node_to_node_scenario(
-            "node-to-node-target-mismatch",
-            "password_fill",
-            "https://example.com/profile",
-            "",
-        )
+        run_node_to_node_scenario(NodeToNodeScenarioSpec {
+            label: "node-to-node-target-mismatch",
+            request_type: "password_fill",
+            action: "password_fill",
+            target: "https://example.com/profile",
+            reason: "loop 5 happy path",
+            lane: HarnessLane::Standard,
+            envs: &[],
+        })
         .await
     }
 
-    async fn run_trusted_input_node_to_node_happy_path(
+    async fn run_trusted_input_node_to_node_scenario(
+        spec: TrustedInputScenarioSpec<'_>,
     ) -> anyhow::Result<TrustedInputNodeToNodeOutcome> {
-        let artifact_dir = new_artifact_dir("trusted-input-node-to-node-happy-path")?;
+        let artifact_dir = new_artifact_dir(spec.label)?;
         let fixture_secret = "stub-secret-material".to_string();
+        let provider_secret_ref = "bw://vault/item/login".to_string();
 
         let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
 
-        let trusted_start = run_e2e_node(&[
-            host_command("", "trusted-start"),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--request-type".to_string(),
-            "password_fill".to_string(),
-            "--action".to_string(),
-            "password_fill".to_string(),
-            "--target".to_string(),
-            "https://example.com/login".to_string(),
-            "--reason".to_string(),
-            "trusted input happy path".to_string(),
-        ])
-        .await?;
+        let trusted_start = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "trusted-start"),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--request-type".to_string(),
+                    "password_fill".to_string(),
+                    "--action".to_string(),
+                    "password_fill".to_string(),
+                    "--target".to_string(),
+                    "https://example.com/login".to_string(),
+                    "--reason".to_string(),
+                    spec.reason.to_string(),
+                ],
+                spec.envs,
+            )
+            .await?;
         let session_id = trusted_start.result["id"]
             .as_str()
             .context("trusted start result missing session id")?
@@ -1307,139 +1405,142 @@ mod tests {
             .context("trusted start result missing completion token")?
             .to_string();
 
-        let trusted_complete = run_e2e_node(&[
-            host_command("", "trusted-complete"),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--id".to_string(),
-            session_id,
-            "--completion-token".to_string(),
-            completion_token,
-            "--secret-ref".to_string(),
-            "bw://vault/item/login".to_string(),
-        ])
-        .await?;
+        let trusted_complete = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "trusted-complete"),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--id".to_string(),
+                    session_id,
+                    "--completion-token".to_string(),
+                    completion_token.clone(),
+                    "--secret-ref".to_string(),
+                    provider_secret_ref.clone(),
+                ],
+                spec.envs,
+            )
+            .await?;
         let opaque_ref = trusted_complete.result["opaque_ref"]
             .as_str()
             .context("trusted complete result missing opaque ref")?
             .to_string();
 
-        let create = run_e2e_node(&[
-            "create".to_string(),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--request-type".to_string(),
-            "password_fill".to_string(),
-            "--secret-ref".to_string(),
-            opaque_ref.clone(),
-            "--action".to_string(),
-            "password_fill".to_string(),
-            "--target".to_string(),
-            "https://example.com/login".to_string(),
-            "--reason".to_string(),
-            "trusted input happy path".to_string(),
-        ])
-        .await?;
+        let create = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "create"),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--request-type".to_string(),
+                    "password_fill".to_string(),
+                    "--secret-ref".to_string(),
+                    opaque_ref.clone(),
+                    "--action".to_string(),
+                    "password_fill".to_string(),
+                    "--target".to_string(),
+                    "https://example.com/login".to_string(),
+                    "--reason".to_string(),
+                    spec.reason.to_string(),
+                ],
+                spec.envs,
+            )
+            .await?;
         let request_id = create.result["id"]
             .as_str()
             .context("create result missing request id")?
             .to_string();
 
-        let approve = run_e2e_node(&[
-            host_command("", "approve"),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-approver-key-1234567890".to_string(),
-            "--id".to_string(),
-            request_id.clone(),
-        ])
-        .await?;
+        let approve = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "approve"),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-approver-key-1234567890".to_string(),
+                    "--id".to_string(),
+                    request_id.clone(),
+                ],
+                spec.envs,
+            )
+            .await?;
         let capability_token = approve.result["capability_token"]
             .as_str()
             .context("approve result missing capability token")?
             .to_string();
 
-        let execute = run_e2e_node(&[
-            host_command("", "execute"),
-            "--broker-url".to_string(),
-            broker_url,
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--id".to_string(),
-            request_id.clone(),
-            "--capability-token".to_string(),
-            capability_token.clone(),
-            "--action".to_string(),
-            "password_fill".to_string(),
-            "--target".to_string(),
-            "https://example.com/login".to_string(),
-        ])
-        .await?;
+        let execute = spec
+            .lane
+            .run(
+                &[
+                    host_command(spec.lane.command_prefix(), "execute"),
+                    "--broker-url".to_string(),
+                    broker_url,
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--id".to_string(),
+                    request_id.clone(),
+                    "--capability-token".to_string(),
+                    capability_token.clone(),
+                    "--action".to_string(),
+                    "password_fill".to_string(),
+                    "--target".to_string(),
+                    "https://example.com/login".to_string(),
+                ],
+                spec.envs,
+            )
+            .await?;
 
         let trusted_start_result = trusted_start.result.clone();
         let trusted_complete_result = trusted_complete.result.clone();
         let create_result = create.result.clone();
         let approve_result = approve.result.clone();
         let execute_result = execute.result.clone();
+        let mut artifact_sensitives = vec![
+            fixture_secret.as_str(),
+            completion_token.as_str(),
+            capability_token.as_str(),
+            opaque_ref.as_str(),
+            provider_secret_ref.as_str(),
+        ];
+        if matches!(spec.lane, HarnessLane::OpenClaw) {
+            artifact_sensitives.push(spec.reason);
+        }
 
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-start.stdout.log"),
-            &trusted_start.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-start.stderr.log"),
-            &trusted_start.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-complete.stdout.log"),
-            &trusted_complete.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-complete.stderr.log"),
-            &trusted_complete.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("client.stdout.log"),
-            &create.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("client.stderr.log"),
-            &create.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stdout.log"),
-            &approve.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stderr.log"),
-            &approve.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stdout.log"),
-            &execute.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stderr.log"),
-            &execute.stderr,
-            &[&fixture_secret, &capability_token],
+        write_redacted_artifacts(
+            &artifact_dir,
+            &[
+                ("trusted-start.stdout.log", trusted_start.stdout.as_str()),
+                ("trusted-start.stderr.log", trusted_start.stderr.as_str()),
+                (
+                    "trusted-complete.stdout.log",
+                    trusted_complete.stdout.as_str(),
+                ),
+                (
+                    "trusted-complete.stderr.log",
+                    trusted_complete.stderr.as_str(),
+                ),
+                ("client.stdout.log", create.stdout.as_str()),
+                ("client.stderr.log", create.stderr.as_str()),
+                ("approver.stdout.log", approve.stdout.as_str()),
+                ("approver.stderr.log", approve.stderr.as_str()),
+                ("execute.stdout.log", execute.stdout.as_str()),
+                ("execute.stderr.log", execute.stderr.as_str()),
+            ],
+            &artifact_sensitives,
         )?;
         write_redacted_artifact(
             &artifact_dir.join("summary.json"),
             &json!({
+                "host": if matches!(spec.lane, HarnessLane::OpenClaw) { "openclaw" } else { "standard" },
                 "opaque_ref": opaque_ref,
                 "request_id": request_id,
                 "capability_token": capability_token,
@@ -1450,7 +1551,7 @@ mod tests {
                 "execute": execute_result
             })
             .to_string(),
-            &[&fixture_secret, &capability_token],
+            &artifact_sensitives,
         )?;
 
         stop_broker(broker_child).await?;
@@ -1473,139 +1574,6 @@ mod tests {
             execute_stderr: execute.stderr,
             trusted_start_result,
             trusted_complete_result,
-            create_result,
-            approve_result,
-            execute_result,
-        })
-    }
-
-    async fn run_adapter_node_to_node_scenario(
-        label: &str,
-        request_type: &str,
-        action: &str,
-        target: &str,
-        command_prefix: &str,
-    ) -> anyhow::Result<NodeToNodeOutcome> {
-        let artifact_dir = new_artifact_dir(label)?;
-        let fixture_secret = "stub-secret-material".to_string();
-
-        let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
-
-        let create = run_e2e_node(&[
-            host_command(command_prefix, "create"),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--request-type".to_string(),
-            request_type.to_string(),
-            "--secret-ref".to_string(),
-            "bw://vault/item/login".to_string(),
-            "--action".to_string(),
-            action.to_string(),
-            "--target".to_string(),
-            target.to_string(),
-            "--reason".to_string(),
-            format!("{label} happy path"),
-        ])
-        .await?;
-        let request_id = create.result["id"]
-            .as_str()
-            .context("create result missing request id")?
-            .to_string();
-
-        let approve = run_e2e_node(&[
-            host_command(command_prefix, "approve"),
-            "--broker-url".to_string(),
-            broker_url.clone(),
-            "--api-key".to_string(),
-            "loop5-approver-key-1234567890".to_string(),
-            "--id".to_string(),
-            request_id.clone(),
-        ])
-        .await?;
-        let capability_token = approve.result["capability_token"]
-            .as_str()
-            .context("approve result missing capability token")?
-            .to_string();
-
-        let execute = run_e2e_node(&[
-            host_command(command_prefix, "execute"),
-            "--broker-url".to_string(),
-            broker_url,
-            "--api-key".to_string(),
-            "loop5-client-key-1234567890".to_string(),
-            "--id".to_string(),
-            request_id.clone(),
-            "--capability-token".to_string(),
-            capability_token.clone(),
-            "--action".to_string(),
-            action.to_string(),
-            "--target".to_string(),
-            target.to_string(),
-        ])
-        .await?;
-
-        let create_result = create.result.clone();
-        let approve_result = approve.result.clone();
-        let execute_result = execute.result.clone();
-
-        write_redacted_artifact(
-            &artifact_dir.join("client.stdout.log"),
-            &create.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("client.stderr.log"),
-            &create.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stdout.log"),
-            &approve.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stderr.log"),
-            &approve.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stdout.log"),
-            &execute.stdout,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stderr.log"),
-            &execute.stderr,
-            &[&fixture_secret, &capability_token],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("summary.json"),
-            &json!({
-                "request_id": request_id,
-                "capability_token": capability_token,
-                "create": create_result,
-                "approve": approve_result,
-                "execute": execute_result
-            })
-            .to_string(),
-            &[&fixture_secret, &capability_token],
-        )?;
-
-        stop_broker(broker_child).await?;
-
-        Ok(NodeToNodeOutcome {
-            artifact_dir,
-            fixture_secret,
-            request_id,
-            capability_token,
-            client_stdout: create.stdout,
-            client_stderr: create.stderr,
-            approver_stdout: approve.stdout,
-            approver_stderr: approve.stderr,
-            execute_stdout: execute.stdout,
-            execute_stderr: execute.stderr,
             create_result,
             approve_result,
             execute_result,
@@ -1613,332 +1581,53 @@ mod tests {
     }
 
     async fn run_request_sign_node_to_node_happy_path() -> anyhow::Result<NodeToNodeOutcome> {
-        run_adapter_node_to_node_scenario(
-            "node-to-node-request-sign",
-            "request_sign",
-            "request_sign",
-            "https://example.com/sign",
-            "",
-        )
+        run_node_to_node_scenario(NodeToNodeScenarioSpec {
+            label: "node-to-node-request-sign",
+            request_type: "request_sign",
+            action: "request_sign",
+            target: "https://example.com/sign",
+            reason: "node-to-node-request-sign happy path",
+            lane: HarnessLane::Standard,
+            envs: &[],
+        })
         .await
     }
 
     async fn run_handoff_node_to_node_happy_path() -> anyhow::Result<NodeToNodeOutcome> {
-        run_adapter_node_to_node_scenario(
-            "node-to-node-credential-handoff",
-            "credential_handoff",
-            "credential_handoff",
-            "handoff://local-helper/session",
-            "",
-        )
+        run_node_to_node_scenario(NodeToNodeScenarioSpec {
+            label: "node-to-node-credential-handoff",
+            request_type: "credential_handoff",
+            action: "credential_handoff",
+            target: "handoff://local-helper/session",
+            reason: "node-to-node-credential-handoff happy path",
+            lane: HarnessLane::Standard,
+            envs: &[],
+        })
         .await
     }
 
     async fn run_openclaw_host_happy_path() -> anyhow::Result<TrustedInputNodeToNodeOutcome> {
-        let artifact_dir = new_artifact_dir("openclaw-host-happy-path")?;
-        let fixture_secret = "stub-secret-material".to_string();
-        let canary = "openclaw-canary-secret";
-        let provider_secret_ref = "bw://vault/item/login".to_string();
-
-        let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
-
-        let trusted_start = run_openclaw_e2e_node_with_env(
-            &[
-                host_command("openclaw-", "trusted-start"),
-                "--broker-url".to_string(),
-                broker_url.clone(),
-                "--api-key".to_string(),
-                "loop5-client-key-1234567890".to_string(),
-                "--request-type".to_string(),
-                "password_fill".to_string(),
-                "--action".to_string(),
-                "password_fill".to_string(),
-                "--target".to_string(),
-                "https://example.com/login".to_string(),
-                "--reason".to_string(),
-                canary.to_string(),
-            ],
-            &[
+        run_trusted_input_node_to_node_scenario(TrustedInputScenarioSpec {
+            label: "openclaw-host-happy-path",
+            reason: "openclaw-canary-secret",
+            lane: HarnessLane::OpenClaw,
+            envs: &[
                 ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
-                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+                ("SECRET_BROKER_E2E_CANARY_SECRET", "openclaw-canary-secret"),
             ],
-        )
-        .await?;
-        let session_id = trusted_start.result["id"]
-            .as_str()
-            .context("trusted start result missing session id")?
-            .to_string();
-        let completion_token = trusted_start.result["completion_token"]
-            .as_str()
-            .context("trusted start result missing completion token")?
-            .to_string();
-
-        let trusted_complete = run_openclaw_e2e_node_with_env(
-            &[
-                host_command("openclaw-", "trusted-complete"),
-                "--broker-url".to_string(),
-                broker_url.clone(),
-                "--api-key".to_string(),
-                "loop5-client-key-1234567890".to_string(),
-                "--id".to_string(),
-                session_id,
-                "--completion-token".to_string(),
-                completion_token.clone(),
-                "--secret-ref".to_string(),
-                provider_secret_ref.clone(),
-            ],
-            &[
-                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
-                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
-            ],
-        )
-        .await?;
-        let opaque_ref = trusted_complete.result["opaque_ref"]
-            .as_str()
-            .context("trusted complete result missing opaque ref")?
-            .to_string();
-
-        let create = run_openclaw_e2e_node_with_env(
-            &[
-                host_command("openclaw-", "create"),
-                "--broker-url".to_string(),
-                broker_url.clone(),
-                "--api-key".to_string(),
-                "loop5-client-key-1234567890".to_string(),
-                "--request-type".to_string(),
-                "password_fill".to_string(),
-                "--secret-ref".to_string(),
-                opaque_ref.clone(),
-                "--action".to_string(),
-                "password_fill".to_string(),
-                "--target".to_string(),
-                "https://example.com/login".to_string(),
-                "--reason".to_string(),
-                canary.to_string(),
-            ],
-            &[
-                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
-                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
-            ],
-        )
-        .await?;
-        let request_id = create.result["id"]
-            .as_str()
-            .context("create result missing request id")?
-            .to_string();
-
-        let approve = run_openclaw_e2e_node_with_env(
-            &[
-                host_command("openclaw-", "approve"),
-                "--broker-url".to_string(),
-                broker_url.clone(),
-                "--api-key".to_string(),
-                "loop5-approver-key-1234567890".to_string(),
-                "--id".to_string(),
-                request_id.clone(),
-            ],
-            &[
-                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
-                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
-            ],
-        )
-        .await?;
-        let capability_token = approve.result["capability_token"]
-            .as_str()
-            .context("approve result missing capability token")?
-            .to_string();
-
-        let execute = run_openclaw_e2e_node_with_env(
-            &[
-                host_command("openclaw-", "execute"),
-                "--broker-url".to_string(),
-                broker_url,
-                "--api-key".to_string(),
-                "loop5-client-key-1234567890".to_string(),
-                "--id".to_string(),
-                request_id.clone(),
-                "--capability-token".to_string(),
-                capability_token.clone(),
-                "--action".to_string(),
-                "password_fill".to_string(),
-                "--target".to_string(),
-                "https://example.com/login".to_string(),
-            ],
-            &[
-                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
-                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
-            ],
-        )
-        .await?;
-
-        let trusted_start_result = trusted_start.result.clone();
-        let trusted_complete_result = trusted_complete.result.clone();
-        let create_result = create.result.clone();
-        let approve_result = approve.result.clone();
-        let execute_result = execute.result.clone();
-
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-start.stdout.log"),
-            &trusted_start.stdout,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-start.stderr.log"),
-            &trusted_start.stderr,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-complete.stdout.log"),
-            &trusted_complete.stdout,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("trusted-complete.stderr.log"),
-            &trusted_complete.stderr,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("client.stdout.log"),
-            &create.stdout,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &opaque_ref,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("client.stderr.log"),
-            &create.stderr,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &opaque_ref,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stdout.log"),
-            &approve.stdout,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &opaque_ref,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("approver.stderr.log"),
-            &approve.stderr,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &opaque_ref,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stdout.log"),
-            &execute.stdout,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &opaque_ref,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("execute.stderr.log"),
-            &execute.stderr,
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &opaque_ref,
-                &provider_secret_ref,
-            ],
-        )?;
-        write_redacted_artifact(
-            &artifact_dir.join("summary.json"),
-            &json!({
-                "host": "openclaw",
-                "opaque_ref": opaque_ref,
-                "request_id": request_id,
-                "capability_token": capability_token,
-                "trusted_start": trusted_start_result,
-                "trusted_complete": trusted_complete_result,
-                "create": create_result,
-                "approve": approve_result,
-                "execute": execute_result
-            })
-            .to_string(),
-            &[
-                &fixture_secret,
-                &canary,
-                &completion_token,
-                &capability_token,
-                &opaque_ref,
-                &provider_secret_ref,
-            ],
-        )?;
-
-        stop_broker(broker_child).await?;
-
-        Ok(TrustedInputNodeToNodeOutcome {
-            artifact_dir,
-            fixture_secret,
-            opaque_ref,
-            request_id,
-            capability_token,
-            trusted_start_stdout: trusted_start.stdout,
-            trusted_start_stderr: trusted_start.stderr,
-            trusted_complete_stdout: trusted_complete.stdout,
-            trusted_complete_stderr: trusted_complete.stderr,
-            create_stdout: create.stdout,
-            create_stderr: create.stderr,
-            approver_stdout: approve.stdout,
-            approver_stderr: approve.stderr,
-            execute_stdout: execute.stdout,
-            execute_stderr: execute.stderr,
-            trusted_start_result,
-            trusted_complete_result,
-            create_result,
-            approve_result,
-            execute_result,
         })
+        .await
+    }
+
+    async fn run_trusted_input_node_to_node_happy_path(
+    ) -> anyhow::Result<TrustedInputNodeToNodeOutcome> {
+        run_trusted_input_node_to_node_scenario(TrustedInputScenarioSpec {
+            label: "trusted-input-node-to-node-happy-path",
+            reason: "trusted input happy path",
+            lane: HarnessLane::Standard,
+            envs: &[],
+        })
+        .await
     }
 
     async fn update_request_action_target(
@@ -3347,8 +3036,11 @@ mod tests {
         async fn node_to_node_misuse_case_fails_closed() -> anyhow::Result<()> {
             let outcome = run_node_to_node_target_mismatch().await?;
 
-            assert_eq!(outcome.execute_result["status"], 403);
-            assert_eq!(outcome.execute_result["body"]["code"], "target_mismatch");
+            assert_eq!(outcome.execute_result["status"], 400);
+            assert_eq!(
+                outcome.execute_result["body"]["code"],
+                "adapter_target_mismatch"
+            );
             assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
             assert_secret_free(&outcome.execute_stderr, &outcome.fixture_secret);
 
@@ -3452,6 +3144,19 @@ mod tests {
             let execute_stdout =
                 fs::read_to_string(outcome.artifact_dir.join("execute.stdout.log"))?;
 
+            let completion_token = outcome.trusted_start_result["completion_token"]
+                .as_str()
+                .context("openclaw completion token missing")?;
+            let canary = "openclaw-canary-secret";
+            let provider_secret_ref = "bw://vault/item/login";
+            let create_masked = outcome.create_result["body"]["data"]["secret_ref_masked"]
+                .as_str()
+                .context("create masked secret ref missing")?;
+            let approval_masked = outcome.approve_result["body"]["data"]["approval_payload"]
+                ["secret_ref_masked"]
+                .as_str()
+                .context("approval masked secret ref missing")?;
+
             assert_eq!(outcome.trusted_start_result["host"], "openclaw");
             assert_eq!(outcome.trusted_complete_result["host"], "openclaw");
             assert_eq!(outcome.create_result["host"], "openclaw");
@@ -3459,17 +3164,8 @@ mod tests {
             assert_eq!(outcome.execute_result["host"], "openclaw");
             assert_eq!(outcome.trusted_start_result["status"], 200);
             assert_eq!(outcome.trusted_complete_result["status"], 200);
-            let completion_token = outcome.trusted_start_result["completion_token"]
-                .as_str()
-                .context("openclaw completion token missing")?;
-            let canary = "openclaw-canary-secret";
-            let provider_secret_ref = "bw://vault/item/login";
-            assert!(
-                outcome.create_result["body"]["data"]["secret_ref_masked"]
-                    .as_str()
-                    .expect("create masked secret ref")
-                    == "bw****in"
-            );
+            assert_ne!(create_masked, provider_secret_ref);
+            assert!(!create_masked.contains(provider_secret_ref));
             assert_eq!(
                 outcome.execute_result["body"]["data"]["result"]["adapter"]["adapter"],
                 "password_fill_stub"
@@ -3483,12 +3179,8 @@ mod tests {
                 outcome.opaque_ref
             );
             assert!(outcome.opaque_ref.starts_with("tir://session/"));
-            assert!(
-                outcome.approve_result["body"]["data"]["approval_payload"]["secret_ref_masked"]
-                    .as_str()
-                    .expect("approval masked secret ref")
-                    == "bw****in"
-            );
+            assert_ne!(approval_masked, provider_secret_ref);
+            assert!(!approval_masked.contains(provider_secret_ref));
             assert!(!outcome
                 .trusted_complete_result
                 .to_string()
@@ -3515,15 +3207,36 @@ mod tests {
                 &approver_stdout,
                 &execute_stdout,
             ] {
-                assert_secret_free(sink, &outcome.fixture_secret);
-                assert!(!sink.contains(canary));
-                assert!(!sink.contains(completion_token));
-                assert!(!sink.contains(&outcome.capability_token));
-                assert!(!sink.contains(&outcome.opaque_ref));
-                assert!(!sink.contains(provider_secret_ref));
-                assert!(!sink.contains("RESULT_JSON={\"host\":\"openclaw\""));
+                assert_no_leaks(
+                    sink,
+                    &outcome.fixture_secret,
+                    &[
+                        canary,
+                        completion_token,
+                        &outcome.capability_token,
+                        &outcome.opaque_ref,
+                        provider_secret_ref,
+                    ],
+                );
             }
 
+            Ok(())
+        }
+
+        #[test]
+        fn openclaw_result_sidecar_is_removed_on_cleanup() -> anyhow::Result<()> {
+            let sidecar = OpenClawResultSidecar::new()?;
+            let path = sidecar.path().to_path_buf();
+
+            sidecar.write_raw(r#"{"ok":true,"data":{"status":200}}"#)?;
+            let decoded = sidecar.read_json()?;
+
+            assert_eq!(decoded["ok"], true);
+            assert!(path.exists());
+
+            sidecar.cleanup()?;
+
+            assert!(!path.exists());
             Ok(())
         }
 
