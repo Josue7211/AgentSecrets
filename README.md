@@ -25,6 +25,9 @@ Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying o
 ## Security model
 - Agent runtimes are treated as untrusted.
 - Broker API responses do not return plaintext secret values.
+- `secret_ref` must be an opaque identifier such as `bw://vault/item/login`.
+- Plaintext secret values are rejected at request creation.
+- Rejected ingress attempts are audited without echoing the submitted secret content.
 - High-risk requests can require human approval.
 - Approvals are bound to request context and token TTL.
 - Capability tokens are one-time and invalid after execution.
@@ -67,6 +70,7 @@ Optional:
 - `SECRET_BROKER_ALLOWED_TARGET_PREFIXES`
 - `SECRET_BROKER_MAX_AMOUNT_CENTS`
 - `SECRET_BROKER_CAPABILITY_TTL_SECONDS`
+- `SECRET_BROKER_PROVIDER_BRIDGE_MODE=off|stub`
 - `SECRET_BROKER_REQUEST_TTL_SECONDS`
 - `SECRET_BROKER_RATE_LIMIT_PER_MINUTE`
 
@@ -80,6 +84,9 @@ Startup behavior:
 - Active auth keys are served from the database
 - Rotated keys take effect immediately without restart
 - Schema is applied through SQL migrations on startup
+- Provider bridge modes:
+  - `off`: default, no trusted-side provider resolution path
+  - `stub`: enables the Loop 2 stub Bitwarden provider bridge for contract verification
 
 ## Run
 ```bash
@@ -154,6 +161,8 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 - Agent runtimes should use the `client` key only.
 - Human approval apps, including iOS dispatch-style flows, should use the `approver` key.
 - Bitwarden is intended to stay on your services VM; future target architecture may mediate `bw://...` refs over the private network.
+- The repo now has a trusted-side provider boundary in stub form.
+- The repo still does **not** claim production Bitwarden mediation or trusted execution adapters.
 - See [docs/OPENCLAW.md](docs/OPENCLAW.md) for the generic OpenClaw drop-in contract.
 
 ## Platform support

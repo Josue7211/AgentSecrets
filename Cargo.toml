@@ -6,6 +6,7 @@ license = "AGPL-3.0-or-later"
 description = "AgentSecrets: standalone zero-trust secret broker for OpenClaw and other agent runtimes"
 
 [dependencies]
+async-trait = "0.1"
 axum = { version = "0.7", features = ["macros"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 serde = { version = "1", features = ["derive"] }

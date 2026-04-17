@@ -9,6 +9,8 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Capability tokens are single-use and expire.
 - Execution results are masked.
 - Audit events exist for request lifecycle activity.
+- Trusted-side provider bridge contract exists in stub form behind config.
+- Provider resolution failures are masked and do not return plaintext.
 
 ## Intended contract, not fully enforced end to end yet
 
@@ -22,7 +24,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Transcript-safe host integrations.
 - Chatbox or session-history redaction across external runtimes.
 - Browser-fill or signing adapters that consume secrets entirely on the trusted side.
-- Full Bitwarden mediation implemented in this repo.
+- Production Bitwarden mediation implemented in this repo.
 - End-to-end node-to-node verification across real host integrations.
 
 ## Supported trust claim in the current repo state

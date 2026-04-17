@@ -3,6 +3,7 @@ mod auth;
 mod handlers;
 mod keys;
 mod policy;
+mod provider;
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
@@ -25,6 +26,7 @@ use tokio::sync::Mutex;
 struct AppState {
     db: Arc<SqlitePool>,
     cfg: Arc<Config>,
+    provider: Arc<provider::ProviderRuntime>,
     rate_state: Arc<Mutex<HashMap<String, Vec<i64>>>>,
 }
 
@@ -40,6 +42,7 @@ struct Config {
     bind: String,
     db_url: String,
     mode: BrokerMode,
+    provider_bridge_mode: provider::ProviderBridgeMode,
     client_api_key: String,
     approver_api_key: String,
     capability_ttl_seconds: i64,
@@ -138,7 +141,14 @@ type RequestRow = (
     String,
 );
 
-type ExecuteLookupRow = (String, String, String, Option<String>, Option<String>);
+type ExecuteLookupRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 type AuditRow = (
     i64,
@@ -231,6 +241,9 @@ fn config_from_env() -> Config {
     let mode = policy::parse_mode(
         &std::env::var("SECRET_BROKER_MODE").unwrap_or_else(|_| "monitor".to_string()),
     );
+    let provider_bridge_mode = provider::parse_provider_bridge_mode(
+        &std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_MODE").unwrap_or_else(|_| "off".to_string()),
+    );
 
     let client_api_key = std::env::var("SECRET_BROKER_CLIENT_API_KEY")
         .or_else(|_| std::env::var("SECRET_BROKER_API_KEY"))
@@ -271,6 +284,7 @@ fn config_from_env() -> Config {
         bind,
         db_url,
         mode,
+        provider_bridge_mode,
         client_api_key,
         approver_api_key,
         capability_ttl_seconds,
@@ -366,6 +380,10 @@ pub async fn run() -> anyhow::Result<()> {
     let state = AppState {
         db: Arc::new(pool),
         cfg: Arc::clone(&cfg),
+        provider: Arc::new(match cfg.provider_bridge_mode {
+            provider::ProviderBridgeMode::Off => provider::ProviderRuntime::off(),
+            provider::ProviderBridgeMode::Stub => provider::ProviderRuntime::stub(),
+        }),
         rate_state: Arc::new(Mutex::new(HashMap::new())),
     };
 
@@ -392,11 +410,15 @@ mod tests {
     use tempfile::NamedTempFile;
     use tower::util::ServiceExt;
 
-    fn test_config(db_url: String) -> Arc<Config> {
+    fn test_config(
+        db_url: String,
+        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+    ) -> Arc<Config> {
         Arc::new(Config {
             bind: "127.0.0.1:0".to_string(),
             db_url,
             mode: BrokerMode::Enforce,
+            provider_bridge_mode,
             client_api_key: "test-client-key-123456".to_string(),
             approver_api_key: "test-approver-key-abcdef".to_string(),
             capability_ttl_seconds: 60,
@@ -407,13 +429,15 @@ mod tests {
         })
     }
 
-    async fn setup_app() -> anyhow::Result<(Router, Arc<Config>)> {
+    async fn setup_app_with_provider_mode(
+        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+    ) -> anyhow::Result<(Router, Arc<Config>)> {
         let db_file = NamedTempFile::new()?;
         let db_path = db_file.path().to_string_lossy().to_string();
         let db_url = format!("sqlite://{}?mode=rwc", db_path);
         std::mem::forget(db_file);
 
-        let cfg = test_config(db_url.clone());
+        let cfg = test_config(db_url.clone(), provider_bridge_mode);
         let pool = connect_sqlite(&db_url).await?;
         init_db(&pool).await?;
         crate::keys::ensure_api_keys(&pool, &cfg).await?;
@@ -421,9 +445,19 @@ mod tests {
         let state = AppState {
             db: Arc::new(pool),
             cfg: Arc::clone(&cfg),
+            provider: Arc::new(match cfg.provider_bridge_mode {
+                crate::provider::ProviderBridgeMode::Off => crate::provider::ProviderRuntime::off(),
+                crate::provider::ProviderBridgeMode::Stub => {
+                    crate::provider::ProviderRuntime::stub()
+                }
+            }),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
         };
         Ok((build_router(state), cfg))
+    }
+
+    async fn setup_app() -> anyhow::Result<(Router, Arc<Config>)> {
+        setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Off).await
     }
 
     async fn json_response(resp: axum::response::Response) -> Value {
@@ -455,6 +489,38 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let json = json_response(resp).await;
         json["data"]["id"].as_str().expect("id").to_string()
+    }
+
+    #[tokio::test]
+    async fn health_reports_provider_bridge_mode() -> anyhow::Result<()> {
+        let (app, _cfg) =
+            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/healthz")
+            .body(Body::empty())?;
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_response(resp).await;
+        assert_eq!(body["provider"]["mode"], "stub");
+        assert_eq!(body["provider"]["provider"], "bitwarden_stub");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn readyz_remains_green_when_stub_provider_is_enabled() -> anyhow::Result<()> {
+        let (app, _cfg) =
+            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/readyz")
+            .body(Body::empty())?;
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        Ok(())
     }
 
     #[tokio::test]
@@ -523,6 +589,120 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_uses_stub_provider_without_leaking_plaintext() -> anyhow::Result<()> {
+        let (app, cfg) =
+            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_response(resp).await;
+        assert_eq!(body["data"]["result"]["provider"]["name"], "bitwarden_stub");
+        assert_eq!(body["data"]["result"]["provider"]["resolution"], "resolved");
+        assert!(!body.to_string().contains("stub-secret-material"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_masks_provider_failures_and_keeps_request_unexecuted() -> anyhow::Result<()> {
+        let (app, cfg) =
+            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": "bw://vault/item/missing",
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "login automation"
+                })
+                .to_string(),
+            ))?;
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_json = json_response(create_resp).await;
+        let id = create_json["data"]["id"].as_str().expect("id").to_string();
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "provider_unavailable");
+        assert!(!body.to_string().contains("missing"));
+
+        let list_req = Request::builder()
+            .method("GET")
+            .uri("/v1/requests?limit=10")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::empty())?;
+        let list_resp = app.clone().oneshot(list_req).await?;
+        let list_json = json_response(list_resp).await;
+        let item = list_json["data"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == id))
+            .expect("request still present");
+        assert_eq!(item["status"], "approved");
+        assert!(item["capability_used_at"].is_null());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn audit_endpoint_requires_approver_key() -> anyhow::Result<()> {
         let (app, cfg) = setup_app().await?;
         let req = Request::builder()
@@ -555,6 +735,108 @@ mod tests {
             ))?;
         let resp = app.clone().oneshot(req).await?;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn request_rejects_plaintext_secret_ref() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let leaked_secret = "Sup3rSecret!";
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": leaked_secret,
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "login automation"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "raw_secret_rejected");
+        assert!(!body.to_string().contains(leaked_secret));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn request_rejects_malformed_non_opaque_secret_ref() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": "vault/item/login",
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "login automation"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "invalid_secret_ref");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ingress_rejection_is_audited_without_echoing_secret() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let leaked_secret = "Sup3rSecret!";
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": leaked_secret,
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "login automation"
+                })
+                .to_string(),
+            ))?;
+
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::BAD_REQUEST);
+
+        let audit_req = Request::builder()
+            .method("GET")
+            .uri("/v1/audit?limit=20")
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let audit_resp = app.clone().oneshot(audit_req).await?;
+        assert_eq!(audit_resp.status(), StatusCode::OK);
+
+        let audit_json = json_response(audit_resp).await;
+        let rows = audit_json["data"].as_array().expect("audit rows");
+        let item = rows
+            .iter()
+            .find(|row| row["action"] == "request.ingress_rejected")
+            .expect("ingress rejection audit row");
+
+        assert_eq!(item["details"]["reason"], "raw_secret_rejected");
+        assert!(!item.to_string().contains(leaked_secret));
         Ok(())
     }
 

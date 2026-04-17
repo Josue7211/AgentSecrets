@@ -47,3 +47,77 @@ pub(crate) fn requires_approval(action: &str, amount_cents: Option<i64>) -> bool
         || a.contains("secret")
         || a.contains("credential")
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SecretRefValidation {
+    Accepted,
+    RejectedPlaintextLike,
+    RejectedMalformed,
+}
+
+pub(crate) fn classify_secret_ref(secret_ref: &str) -> SecretRefValidation {
+    let value = secret_ref.trim();
+
+    if let Some(rest) = value.strip_prefix("bw://") {
+        if !rest.is_empty()
+            && rest.contains('/')
+            && !rest.starts_with('/')
+            && !rest.ends_with('/')
+            && !rest.chars().any(|c| c.is_whitespace())
+        {
+            return SecretRefValidation::Accepted;
+        }
+        return SecretRefValidation::RejectedMalformed;
+    }
+
+    if looks_like_plaintext_secret(value) {
+        return SecretRefValidation::RejectedPlaintextLike;
+    }
+
+    SecretRefValidation::RejectedMalformed
+}
+
+fn looks_like_plaintext_secret(value: &str) -> bool {
+    if value.len() < 8 || value.len() > 256 {
+        return false;
+    }
+    if value.contains("://") || value.contains('/') || value.chars().any(|c| c.is_whitespace()) {
+        return false;
+    }
+
+    let has_lower = value.chars().any(|c| c.is_ascii_lowercase());
+    let has_upper = value.chars().any(|c| c.is_ascii_uppercase());
+    let has_digit = value.chars().any(|c| c.is_ascii_digit());
+    let has_symbol = value.chars().any(|c| !c.is_ascii_alphanumeric());
+
+    has_lower && has_digit && (has_upper || has_symbol)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_secret_ref, SecretRefValidation};
+
+    #[test]
+    fn accepts_bitwarden_opaque_refs() {
+        assert_eq!(
+            classify_secret_ref("bw://vault/item/login"),
+            SecretRefValidation::Accepted
+        );
+    }
+
+    #[test]
+    fn rejects_plaintext_password_like_values() {
+        assert_eq!(
+            classify_secret_ref("Sup3rSecret!"),
+            SecretRefValidation::RejectedPlaintextLike
+        );
+    }
+
+    #[test]
+    fn rejects_non_opaque_malformed_values() {
+        assert_eq!(
+            classify_secret_ref("vault/item/login"),
+            SecretRefValidation::RejectedMalformed
+        );
+    }
+}

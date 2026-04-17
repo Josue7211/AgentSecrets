@@ -1,9 +1,12 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde_json::{json, Value};
 
+use crate::provider::SecretProvider;
 use crate::AppState;
 
 pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
+    let provider = state.provider.health().await;
+
     Json(json!({
         "ok": true,
         "service": "secret-broker",
@@ -12,6 +15,7 @@ pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
             crate::BrokerMode::Monitor => "monitor",
             crate::BrokerMode::Enforce => "enforce",
         },
+        "provider": provider,
     }))
 }
 

@@ -6,7 +6,8 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::policy::{
-    contains_illegal_chars, is_valid_status_filter, requires_approval, target_allowed,
+    classify_secret_ref, contains_illegal_chars, is_valid_status_filter, requires_approval,
+    target_allowed, SecretRefValidation,
 };
 use crate::{
     audit::append_audit,
@@ -52,6 +53,51 @@ pub(crate) async fn create_request(
             "invalid_secret_ref",
             "Invalid secret_ref",
         ));
+    }
+    match classify_secret_ref(secret_ref) {
+        SecretRefValidation::Accepted => {}
+        SecretRefValidation::RejectedPlaintextLike => {
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.ingress_rejected",
+                None,
+                &json!({
+                    "reason": "raw_secret_rejected",
+                    "request_type": request_type,
+                    "action": action,
+                    "target": target,
+                }),
+            )
+            .await;
+
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "raw_secret_rejected",
+                "Plaintext secret values are not accepted; use an opaque secret_ref",
+            ));
+        }
+        SecretRefValidation::RejectedMalformed => {
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.ingress_rejected",
+                None,
+                &json!({
+                    "reason": "invalid_secret_ref",
+                    "request_type": request_type,
+                    "action": action,
+                    "target": target,
+                }),
+            )
+            .await;
+
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "invalid_secret_ref",
+                "Invalid secret_ref",
+            ));
+        }
     }
     if action.is_empty() || action.len() > 128 || contains_illegal_chars(action) {
         return Err(err(

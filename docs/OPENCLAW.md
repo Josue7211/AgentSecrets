@@ -7,8 +7,9 @@ This doc describes the intended broker contract for OpenClaw-like host apps. It 
 - Talk only to the broker API.
 - Use the `client` key for runtime requests.
 - Never embed provider credentials in OpenClaw.
-- Never request raw secret values from the broker.
-- Treat opaque secret refs such as `bw://...` as the supported contract.
+- Never send raw secret values to the broker.
+- Use opaque refs such as `bw://...` only.
+- If the broker returns `raw_secret_rejected`, the host flow is violating the trusted-boundary contract.
 - Stay on the untrusted side of the trust boundary.
 
 ## Minimum setup

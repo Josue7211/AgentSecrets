@@ -13,11 +13,14 @@ Flow:
 
 The current repo guarantees broker-level masked responses. It does **not** yet guarantee transcript-safe host behavior.
 
-## Required integration rule
+## Secret ingress contract
 
-- Never request raw secret values from the broker.
-- Treat opaque refs such as `bw://...` as the intended contract.
+- Send opaque secret references only, for example `bw://vault/item/login`.
+- Do not send plaintext passwords or recovery codes to `POST /v1/requests`.
+- Treat `raw_secret_rejected` as a hard integration error that must be fixed in the caller.
 - Do not put plaintext passwords into prompts, chat boxes, or task memory.
+- Do not expect provider credentials or plaintext provider results from the broker.
+- Treat `provider_unavailable` and `provider_unsupported` as broker contract failures, not as permission to bypass the broker.
 
 ## Approval app pattern
 

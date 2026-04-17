@@ -8,8 +8,10 @@ use serde_json::{json, Value};
 use crate::{
     audit::append_audit,
     auth::{enforce_rate_limit, require_client_or_approver},
-    err, now_unix, ok, sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState,
-    ExecuteBody, ExecuteLookupRow,
+    err, now_unix, ok,
+    provider::SecretProvider,
+    sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState, ExecuteBody,
+    ExecuteLookupRow,
 };
 
 use super::expire_stale_requests;
@@ -39,7 +41,7 @@ pub(crate) async fn execute_request(
     }
 
     let row: Option<ExecuteLookupRow> = sqlx::query_as(
-        "SELECT status, action, target, capability_hash, capability_expires_at
+        "SELECT status, action, target, secret_ref, capability_hash, capability_expires_at
          FROM secret_broker_requests
          WHERE id = ?
          LIMIT 1",
@@ -55,7 +57,8 @@ pub(crate) async fn execute_request(
         )
     })?;
 
-    let Some((status, action, target, capability_hash, capability_expires_at)) = row else {
+    let Some((status, action, target, secret_ref, capability_hash, capability_expires_at)) = row
+    else {
         return Err(err(StatusCode::NOT_FOUND, "not_found", "Request not found"));
     };
 
@@ -122,6 +125,59 @@ pub(crate) async fn execute_request(
         }
     }
 
+    let provider_result = match state.cfg.provider_bridge_mode {
+        crate::provider::ProviderBridgeMode::Off => None,
+        _ => {
+            let resolved = match state.provider.resolve_for_use(&secret_ref).await {
+                Ok(resolved) => resolved,
+                Err(provider_err) => {
+                    let code = match provider_err.code {
+                        crate::provider::ProviderErrorCode::UnsupportedProvider => {
+                            "provider_unsupported"
+                        }
+                        crate::provider::ProviderErrorCode::Unavailable => "provider_unavailable",
+                    };
+
+                    let _ = append_audit(
+                        &state.db,
+                        &auth_ctx.key_fingerprint,
+                        "request.provider_resolve_failed",
+                        Some(&body.id),
+                        &json!({ "code": code }),
+                    )
+                    .await;
+
+                    return Err(err(
+                        StatusCode::BAD_GATEWAY,
+                        code,
+                        "Trusted provider resolution failed",
+                    ));
+                }
+            };
+
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.provider_resolved",
+                Some(&body.id),
+                &json!({
+                    "provider": resolved.provider_name,
+                    "mode": match state.cfg.provider_bridge_mode {
+                        crate::provider::ProviderBridgeMode::Off => "off",
+                        crate::provider::ProviderBridgeMode::Stub => "stub",
+                    },
+                }),
+            )
+            .await;
+
+            Some(json!({
+                "name": resolved.provider_name,
+                "resolution": "resolved",
+                "secret_ref_masked": resolved.secret_ref_masked,
+            }))
+        }
+    };
+
     let execution_result = json!({
         "ok": true,
         "masked": {
@@ -129,6 +185,7 @@ pub(crate) async fn execute_request(
             "action": action,
             "target": target,
         },
+        "provider": provider_result,
         "note": "no plaintext secrets returned",
     });
 
