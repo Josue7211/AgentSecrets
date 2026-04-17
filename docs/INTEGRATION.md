@@ -9,9 +9,11 @@ Flow:
 1. `POST /v1/requests`
 2. Wait for approver decision if status is `pending_approval`
 3. Receive one-time `capability_token` at request creation for auto-approved requests, or from the approval response for pending ones
-4. `POST /v1/execute`
+4. Read the masked `approval_payload` from the approval response when human review is involved
+5. `POST /v1/execute` with the same `id`, `capability_token`, `action`, and `target` that were approved
 
 The current repo guarantees broker-level masked responses. It does **not** yet guarantee transcript-safe host behavior.
+The current V2 evidence bar now includes a local node-to-node harness for the stubbed broker, approver, and untrusted client flow. That harness is not the same thing as supported-host certification.
 
 ## Secret ingress contract
 
@@ -31,10 +33,18 @@ Use only the **approver key**.
 
 Suggested approval payload shown to user:
 
+- request type
 - action
 - target
-- amount
 - masked secret ref
+- reason
+
+Approval contract:
+
+- Treat the capability token as one bounded act, not as a reusable secret handle.
+- Do not mutate `action` or `target` between approval display and `POST /v1/execute`.
+- If the broker returns `action_mismatch`, `target_mismatch`, `capability_expired`, or `invalid_capability_context`, fail closed and create a new request.
+- Denied requests invalidate any pending capability state.
 
 ## Host-app integration rule
 
@@ -52,3 +62,4 @@ Treat any OpenClaw-like host app as an untrusted runtime:
 2. Observe requests and tune allowlist and caps
 3. `SECRET_BROKER_MODE=enforce`
 4. Add trusted provider and execution boundaries before expanding security claims
+5. Keep `bash scripts/run-e2e-harness.sh` green before claiming the stubbed V2 flow is defended end to end at the local process-boundary level

@@ -151,6 +151,10 @@ type ExecuteLookupRow = (
     String,
     Option<String>,
     Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 type AuditRow = (
@@ -417,9 +421,19 @@ pub async fn run() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
     use axum::{body::Body, http::Request};
     use serde_json::{json, Value};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Stdio,
+        sync::OnceLock,
+        time::Duration,
+    };
     use tempfile::NamedTempFile;
+    use tokio::process::{Child, Command};
+    use tokio::time::sleep;
     use tower::util::ServiceExt;
 
     fn test_config(
@@ -524,6 +538,384 @@ mod tests {
         json["data"]["id"].as_str().expect("id").to_string()
     }
 
+    #[derive(Debug)]
+    struct NodeInvocation {
+        stdout: String,
+        stderr: String,
+        result: Value,
+    }
+
+    #[derive(Debug)]
+    struct NodeToNodeOutcome {
+        artifact_dir: PathBuf,
+        fixture_secret: String,
+        request_id: String,
+        capability_token: String,
+        client_stdout: String,
+        client_stderr: String,
+        approver_stdout: String,
+        approver_stderr: String,
+        execute_stdout: String,
+        execute_stderr: String,
+        create_result: Value,
+        approve_result: Value,
+        execute_result: Value,
+    }
+
+    static E2E_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
+
+    fn assert_secret_free(surface: &str, secret: &str) {
+        assert!(
+            !surface.contains(secret),
+            "secret leaked into captured surface: {surface}"
+        );
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn e2e_binary_path(name: &str) -> PathBuf {
+        repo_root()
+            .join("target")
+            .join("debug")
+            .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+    }
+
+    fn ensure_e2e_binaries_built() -> anyhow::Result<()> {
+        let status = E2E_BUILD.get_or_init(|| {
+            let output = std::process::Command::new("cargo")
+                .args(["build", "--bin", "secret-broker", "--bin", "e2e-node"])
+                .current_dir(repo_root())
+                .output();
+
+            match output {
+                Ok(output) if output.status.success() => Ok(()),
+                Ok(output) => Err(format!(
+                    "cargo build failed\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )),
+                Err(err) => Err(format!("failed to invoke cargo build: {err}")),
+            }
+        });
+
+        match status {
+            Ok(()) => Ok(()),
+            Err(message) => anyhow::bail!("{message}"),
+        }
+    }
+
+    fn new_artifact_dir(label: &str) -> anyhow::Result<PathBuf> {
+        let path = repo_root()
+            .join("target")
+            .join("e2e-artifacts")
+            .join(format!("{label}-{}", random_hex(6)));
+        fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+
+    fn scrub_text(text: &str, sensitive_values: &[&str]) -> String {
+        let mut scrubbed = text.to_string();
+        for value in sensitive_values {
+            if !value.is_empty() {
+                scrubbed = scrubbed.replace(value, "[redacted]");
+            }
+        }
+        scrubbed
+    }
+
+    fn write_redacted_artifact(
+        path: &Path,
+        content: &str,
+        sensitive_values: &[&str],
+    ) -> anyhow::Result<()> {
+        fs::write(path, scrub_text(content, sensitive_values))?;
+        Ok(())
+    }
+
+    fn parse_result_line(stdout: &str) -> anyhow::Result<Value> {
+        let line = stdout
+            .lines()
+            .find(|line| line.starts_with("RESULT_JSON="))
+            .context("missing RESULT_JSON line in node output")?;
+        Ok(serde_json::from_str(
+            line.trim_start_matches("RESULT_JSON="),
+        )?)
+    }
+
+    fn random_local_port() -> anyhow::Result<u16> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        drop(listener);
+        Ok(port)
+    }
+
+    async fn wait_for_broker_ready(broker_url: &str) -> anyhow::Result<()> {
+        let client = reqwest::Client::new();
+        for _ in 0..50 {
+            match client.get(format!("{broker_url}/readyz")).send().await {
+                Ok(resp) if resp.status() == reqwest::StatusCode::OK => return Ok(()),
+                _ => sleep(Duration::from_millis(100)).await,
+            }
+        }
+
+        anyhow::bail!("broker did not become ready at {broker_url}");
+    }
+
+    async fn spawn_broker(artifact_dir: &Path) -> anyhow::Result<(Child, String)> {
+        ensure_e2e_binaries_built()?;
+
+        let port = random_local_port()?;
+        let broker_url = format!("http://127.0.0.1:{port}");
+        let db_path = artifact_dir.join("broker.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
+        let stdout_log = fs::File::create(artifact_dir.join("broker.stdout.log"))?;
+        let stderr_log = fs::File::create(artifact_dir.join("broker.stderr.log"))?;
+
+        let child = Command::new(e2e_binary_path("secret-broker"))
+            .current_dir(repo_root())
+            .env("SECRET_BROKER_BIND", format!("127.0.0.1:{port}"))
+            .env("SECRET_BROKER_DB", db_url)
+            .env("SECRET_BROKER_MODE", "enforce")
+            .env(
+                "SECRET_BROKER_CLIENT_API_KEY",
+                "loop5-client-key-1234567890",
+            )
+            .env(
+                "SECRET_BROKER_APPROVER_API_KEY",
+                "loop5-approver-key-1234567890",
+            )
+            .env(
+                "SECRET_BROKER_ALLOWED_TARGET_PREFIXES",
+                "https://example.com",
+            )
+            .env("SECRET_BROKER_PROVIDER_BRIDGE_MODE", "stub")
+            .env("SECRET_BROKER_EXECUTION_ADAPTER_MODE", "stub")
+            .stdout(Stdio::from(stdout_log))
+            .stderr(Stdio::from(stderr_log))
+            .spawn()
+            .context("failed to spawn broker process")?;
+
+        wait_for_broker_ready(&broker_url).await?;
+        Ok((child, broker_url))
+    }
+
+    async fn stop_broker(mut child: Child) -> anyhow::Result<()> {
+        if child.try_wait()?.is_none() {
+            child.start_kill()?;
+            let _ = child.wait().await?;
+        }
+        Ok(())
+    }
+
+    async fn run_e2e_node(args: &[String]) -> anyhow::Result<NodeInvocation> {
+        ensure_e2e_binaries_built()?;
+
+        let output = Command::new(e2e_binary_path("e2e-node"))
+            .current_dir(repo_root())
+            .args(args)
+            .output()
+            .await
+            .context("failed to run e2e-node helper")?;
+
+        let stdout = String::from_utf8(output.stdout).context("stdout must be utf-8")?;
+        let stderr = String::from_utf8(output.stderr).context("stderr must be utf-8")?;
+
+        if !output.status.success() {
+            anyhow::bail!("e2e-node failed\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        }
+
+        let result = parse_result_line(&stdout)?;
+        Ok(NodeInvocation {
+            stdout,
+            stderr,
+            result,
+        })
+    }
+
+    async fn run_node_to_node_scenario(
+        label: &str,
+        execute_action: &str,
+        execute_target: &str,
+    ) -> anyhow::Result<NodeToNodeOutcome> {
+        let artifact_dir = new_artifact_dir(label)?;
+        let fixture_secret = "stub-secret-material".to_string();
+
+        let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
+
+        let create = run_e2e_node(&[
+            "create".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--request-type".to_string(),
+            "password_fill".to_string(),
+            "--secret-ref".to_string(),
+            "bw://vault/item/login".to_string(),
+            "--action".to_string(),
+            "password_fill".to_string(),
+            "--target".to_string(),
+            "https://example.com/login".to_string(),
+            "--reason".to_string(),
+            "loop 5 happy path".to_string(),
+        ])
+        .await?;
+        let request_id = create.result["id"]
+            .as_str()
+            .context("create result missing request id")?
+            .to_string();
+
+        let approve = run_e2e_node(&[
+            "approve".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-approver-key-1234567890".to_string(),
+            "--id".to_string(),
+            request_id.clone(),
+        ])
+        .await?;
+        let capability_token = approve.result["capability_token"]
+            .as_str()
+            .context("approve result missing capability token")?
+            .to_string();
+
+        let execute = run_e2e_node(&[
+            "execute".to_string(),
+            "--broker-url".to_string(),
+            broker_url,
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--id".to_string(),
+            request_id.clone(),
+            "--capability-token".to_string(),
+            capability_token.clone(),
+            "--action".to_string(),
+            execute_action.to_string(),
+            "--target".to_string(),
+            execute_target.to_string(),
+        ])
+        .await?;
+
+        let create_result = create.result.clone();
+        let approve_result = approve.result.clone();
+        let execute_result = execute.result.clone();
+
+        write_redacted_artifact(
+            &artifact_dir.join("client.stdout.log"),
+            &create.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("client.stderr.log"),
+            &create.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stdout.log"),
+            &approve.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stderr.log"),
+            &approve.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stdout.log"),
+            &execute.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stderr.log"),
+            &execute.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("summary.json"),
+            &json!({
+                "request_id": request_id,
+                "capability_token": capability_token,
+                "create": create_result,
+                "approve": approve_result,
+                "execute": execute_result
+            })
+            .to_string(),
+            &[&fixture_secret, &capability_token],
+        )?;
+
+        stop_broker(broker_child).await?;
+
+        Ok(NodeToNodeOutcome {
+            artifact_dir,
+            fixture_secret,
+            request_id,
+            capability_token,
+            client_stdout: create.stdout,
+            client_stderr: create.stderr,
+            approver_stdout: approve.stdout,
+            approver_stderr: approve.stderr,
+            execute_stdout: execute.stdout,
+            execute_stderr: execute.stderr,
+            create_result,
+            approve_result,
+            execute_result,
+        })
+    }
+
+    async fn run_node_to_node_happy_path() -> anyhow::Result<NodeToNodeOutcome> {
+        run_node_to_node_scenario(
+            "node-to-node-happy-path",
+            "password_fill",
+            "https://example.com/login",
+        )
+        .await
+    }
+
+    async fn run_node_to_node_target_mismatch() -> anyhow::Result<NodeToNodeOutcome> {
+        run_node_to_node_scenario(
+            "node-to-node-target-mismatch",
+            "password_fill",
+            "https://example.com/profile",
+        )
+        .await
+    }
+
+    async fn update_request_action_target(
+        cfg: &Config,
+        id: &str,
+        action: &str,
+        target: &str,
+    ) -> anyhow::Result<()> {
+        let pool = connect_sqlite(&cfg.db_url).await?;
+        sqlx::query(
+            "UPDATE secret_broker_requests
+             SET action = ?, target = ?, updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(action)
+        .bind(target)
+        .bind(id)
+        .execute(&pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn clear_request_expiry(cfg: &Config, id: &str) -> anyhow::Result<()> {
+        let pool = connect_sqlite(&cfg.db_url).await?;
+        sqlx::query(
+            "UPDATE secret_broker_requests
+             SET capability_expires_at = NULL, updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn health_reports_provider_bridge_mode() -> anyhow::Result<()> {
         let (app, _cfg) =
@@ -620,6 +1012,222 @@ mod tests {
             .body(Body::from(exec_body.to_string()))?;
         let replay_resp = app.clone().oneshot(replay_req).await?;
         assert_eq!(replay_resp.status(), StatusCode::BAD_REQUEST);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_action_mismatch() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        update_request_action_target(&cfg, &id, "copy_secret", "https://example.com/login").await?;
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "copy_secret",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "action_mismatch");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_target_mismatch() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        update_request_action_target(&cfg, &id, "password_fill", "https://evil.example.com/login")
+            .await?;
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://evil.example.com/login"
+                })
+                .to_string(),
+            ))?;
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "target_mismatch");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn capability_expiry_is_enforced() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        clear_request_expiry(&cfg, &id).await?;
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "invalid_capability_context");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_payload_is_masked_and_truthful() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+
+        let body = json_response(approve_resp).await;
+        assert_eq!(body["data"]["id"], id);
+        assert_eq!(body["data"]["status"], "approved");
+        assert_eq!(
+            body["data"]["approval_payload"]["request_type"],
+            "password_fill"
+        );
+        assert_eq!(body["data"]["approval_payload"]["action"], "password_fill");
+        assert_eq!(
+            body["data"]["approval_payload"]["target"],
+            "https://example.com/login"
+        );
+        assert_eq!(
+            body["data"]["approval_payload"]["secret_ref_masked"],
+            "bw****in"
+        );
+        assert_eq!(
+            body["data"]["approval_payload"]["reason"],
+            "login automation"
+        );
+        assert!(!body.to_string().contains("bw://vault/item/login"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deny_clears_capability_state() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+
+        let deny_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/deny"))
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::from(
+                json!({ "reason": "no longer approved" }).to_string(),
+            ))?;
+        let deny_resp = app.clone().oneshot(deny_req).await?;
+        assert_eq!(deny_resp.status(), StatusCode::OK);
+
+        let list_req = Request::builder()
+            .method("GET")
+            .uri("/v1/requests?limit=10")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::empty())?;
+        let list_resp = app.clone().oneshot(list_req).await?;
+        assert_eq!(list_resp.status(), StatusCode::OK);
+        let list_json = json_response(list_resp).await;
+        let item = list_json["data"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == id))
+            .expect("denied request in list");
+
+        assert_eq!(item["status"], "denied");
+        assert!(item["capability_expires_at"].is_null());
+        assert!(item["capability_used_at"].is_null());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approve_endpoint_requires_approver_key() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::FORBIDDEN);
         Ok(())
     }
 
@@ -1031,5 +1639,75 @@ mod tests {
         let new_resp = app.clone().oneshot(new_req).await?;
         assert_eq!(new_resp.status(), StatusCode::OK);
         Ok(())
+    }
+
+    mod e2e_harness {
+        use super::*;
+
+        #[tokio::test]
+        async fn node_to_node_harness_keeps_transcripts_secret_free() -> anyhow::Result<()> {
+            let outcome = run_node_to_node_happy_path().await?;
+
+            assert_secret_free(&outcome.client_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.client_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stderr, &outcome.fixture_secret);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn node_to_node_misuse_case_fails_closed() -> anyhow::Result<()> {
+            let outcome = run_node_to_node_target_mismatch().await?;
+
+            assert_eq!(outcome.execute_result["status"], 403);
+            assert_eq!(outcome.execute_result["body"]["code"], "target_mismatch");
+            assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stderr, &outcome.fixture_secret);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn node_to_node_execute_path_keeps_broker_response_secret_free() -> anyhow::Result<()>
+        {
+            let outcome = run_node_to_node_happy_path().await?;
+
+            assert_eq!(outcome.execute_result["status"], 200);
+            assert_eq!(outcome.execute_result["body"]["ok"], true);
+            assert_eq!(outcome.request_id, outcome.create_result["id"]);
+            assert_eq!(
+                outcome.approve_result["body"]["data"]["capability_token"],
+                outcome.capability_token
+            );
+            assert_secret_free(&outcome.create_result.to_string(), &outcome.fixture_secret);
+            assert_secret_free(&outcome.approve_result.to_string(), &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_result.to_string(), &outcome.fixture_secret);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn node_to_node_failure_artifacts_remain_redacted() -> anyhow::Result<()> {
+            let outcome = run_node_to_node_target_mismatch().await?;
+            let summary = fs::read_to_string(outcome.artifact_dir.join("summary.json"))?;
+            let client_stdout = fs::read_to_string(outcome.artifact_dir.join("client.stdout.log"))?;
+            let approver_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("approver.stdout.log"))?;
+            let execute_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("execute.stdout.log"))?;
+
+            assert_secret_free(&summary, &outcome.fixture_secret);
+            assert_secret_free(&client_stdout, &outcome.fixture_secret);
+            assert_secret_free(&approver_stdout, &outcome.fixture_secret);
+            assert_secret_free(&execute_stdout, &outcome.fixture_secret);
+            assert!(!summary.contains(&outcome.capability_token));
+            assert!(!approver_stdout.contains(&outcome.capability_token));
+            assert!(!execute_stdout.contains(&outcome.capability_token));
+
+            Ok(())
+        }
     }
 }

@@ -1,8 +1,8 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-17T13:16:52-04:00",
+  "timestamp": "2026-04-17T14:36:01-04:00",
   "branch": "roadmap/zero-trust-v2-v4-hardening",
-  "status": "paused",
+  "status": "ready_for_loop_6",
   "workstream": "zero-trust roadmap execution handoff",
   "current_position": {
     "completed_upstream_commit": "543ed8b",
@@ -11,13 +11,13 @@
       "V2 Loop 2 provider isolation contract"
     ],
     "current_session_scope": [
-      "added per-loop roadmap plan files for remaining loops",
-      "added detailed spec pack for remaining loops",
-      "implemented V2 Loop 3 execution adapter containment",
-      "updated handoff artifacts to route next work into V2 Loop 4"
+      "implemented V2 Loop 4 capability and approval hardening",
+      "implemented V2 Loop 5 local node-to-node E2E harness with real broker and helper-node process boundaries",
+      "added redacted artifact capture, harness runner script, and CI gate for Loop 5",
+      "updated docs and handoff artifacts to route next work into V2 Loop 6"
     ],
-    "next_loop": "V2 Loop 4",
-    "next_entrypoint": "docs/superpowers/plans/2026-04-17-v2-loop-4-capability-and-approval-hardening.md"
+    "next_loop": "V2 Loop 6",
+    "next_entrypoint": "docs/superpowers/plans/2026-04-17-v2-loop-6-v2-ship-gate.md"
   },
   "completed_work": [
     {
@@ -49,17 +49,32 @@
       "id": 6,
       "name": "Verified Loop 3 with tests, fmt, and clippy",
       "status": "done"
+    },
+    {
+      "id": 7,
+      "name": "Implemented V2 Loop 4 capability binding, approval payload hardening, and denial invalidation",
+      "status": "done"
+    },
+    {
+      "id": 8,
+      "name": "Verified Loop 4 with focused tests, cargo test, fmt, and clippy",
+      "status": "done"
+    },
+    {
+      "id": 9,
+      "name": "Implemented V2 Loop 5 node-to-node E2E harness with helper-node binary and redacted artifact capture",
+      "status": "done"
+    },
+    {
+      "id": 10,
+      "name": "Verified Loop 5 with focused harness tests, harness script, full cargo test, fmt, claim audit, and clippy",
+      "status": "done"
     }
   ],
   "remaining_work": [
     {
-      "id": 7,
-      "name": "Start implementation in roadmap order with V2 Loop 4 using TDD",
-      "status": "not_started"
-    },
-    {
-      "id": 8,
-      "name": "Tighten capability binding and approval payload semantics without skipping ahead to Loop 5",
+      "id": 11,
+      "name": "Start implementation in roadmap order with V2 Loop 6 using the completed Loop 5 harness evidence as a ship gate input",
       "status": "not_started"
     }
   ],
@@ -80,18 +95,41 @@
   "blockers": [],
   "human_actions_pending": [],
   "background_processes": [],
-  "uncommitted_files": [],
-  "next_action": "Open docs/superpowers/plans/2026-04-17-v2-loop-4-capability-and-approval-hardening.md and begin Loop 4 in strict TDD order.",
-  "context_notes": "Repo truth after this session: V2 Loop 1 and Loop 2 were already in place at 543ed8b. This session added the remaining roadmap docs and implemented V2 Loop 3 with a trusted execution adapter stub, fail-closed adapter dispatch, adapter health, and matching docs updates. The clean continuation path is V2 Loop 4 only.",
+  "uncommitted_files": [
+    ".github/workflows/ci.yml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "HANDOFF.json",
+    "README.md",
+    "docs/INTEGRATION.md",
+    "docs/OPENCLAW.md",
+    "docs/RELEASE.md",
+    "docs/SECURITY_GUARANTEES.md",
+    "scripts/run-e2e-harness.sh",
+    "src/bin/e2e-node.rs",
+    "src/handlers/execution.rs",
+    "src/handlers/requests.rs",
+    "src/lib.rs",
+    "migrations/0002_capability_binding.sql"
+  ],
+  "next_action": "Open docs/superpowers/plans/2026-04-17-v2-loop-6-v2-ship-gate.md, use the current dirty Loop 4 plus Loop 5 tree as the resume baseline, and turn the now-green node-to-node harness into the explicit V2 ship gate.",
+  "context_notes": "Repo truth after this session: V2 Loop 1 and Loop 2 were already in place at 543ed8b. A later session added the remaining roadmap docs and implemented V2 Loop 3 with a trusted execution adapter stub. Another session completed V2 Loop 4 by binding capabilities to approval-time request/action/target context, requiring execute-time action and target, failing closed on missing capability context, clearing denied/consumed capability state, adding masked approval payloads, and updating docs. This session completed V2 Loop 5 by adding a local node-to-node harness in `src/lib.rs`, a helper process binary in `src/bin/e2e-node.rs`, a wrapper script in `scripts/run-e2e-harness.sh`, CI gating in `.github/workflows/ci.yml`, and docs that say the local harness now backs the stubbed V2 process-boundary claim while still not claiming real host certification. The worktree remains intentionally dirty with the verified Loop 4 and Loop 5 changes listed in uncommitted_files. The clean continuation path is V2 Loop 6 only.",
   "recommended_first_tests": [
-    "execute_rejects_action_mismatch",
-    "execute_rejects_target_mismatch",
-    "capability_expiry_is_enforced",
-    "approval_payload_is_masked_and_truthful"
+    "node_to_node_harness_keeps_transcripts_secret_free",
+    "node_to_node_execute_path_keeps_broker_response_secret_free",
+    "node_to_node_misuse_case_fails_closed",
+    "node_to_node_failure_artifacts_remain_redacted"
   ],
   "verification_ran": [
-    "cargo test adapter::tests -- --nocapture",
-    "cargo test -- --nocapture",
+    "cargo test e2e_harness:: -- --nocapture",
+    "bash scripts/run-e2e-harness.sh",
+    "bash scripts/check-security-claims.sh",
+    "cargo test execute_rejects_action_mismatch -- --nocapture",
+    "cargo test execute_rejects_target_mismatch -- --nocapture",
+    "cargo test capability_expiry_is_enforced -- --nocapture",
+    "cargo test approval_payload_is_masked_and_truthful -- --nocapture",
+    "cargo test --all-targets --all-features -- --nocapture",
+    "cargo fmt --all",
     "cargo fmt --all -- --check",
     "cargo clippy --all-targets --all-features -- -D warnings"
   ]

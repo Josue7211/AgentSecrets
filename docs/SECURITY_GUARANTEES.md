@@ -7,6 +7,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Broker API responses do not return plaintext secret values.
 - Request and approval flows use separate `client` and `approver` roles.
 - Capability tokens are single-use and expire.
+- Approved capabilities are bound to request id, action, and target.
 - Execution results are masked.
 - Audit events exist for request lifecycle activity.
 - Trusted-side provider bridge contract exists in stub form behind config.
@@ -14,6 +15,9 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - One trusted execution adapter path exists in stub form behind config.
 - Unsupported adapter action or target context fails closed.
 - Adapter success and failure paths are audited without plaintext.
+- Approval responses expose masked review payloads only.
+- Missing or malformed capability context fails closed.
+- Local Loop 5 node-to-node harness evidence exists for the stubbed V2 flow.
 
 ## Intended contract, not fully enforced end to end yet
 
@@ -29,6 +33,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Real browser-fill or signing adapters beyond the current stub contract.
 - Production Bitwarden mediation implemented in this repo.
 - End-to-end node-to-node verification across real host integrations.
+- Supported-host certification for OpenClaw or any other external runtime.
 
 ## Supported trust claim in the current repo state
 

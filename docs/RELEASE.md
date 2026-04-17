@@ -8,8 +8,10 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Confirm `LICENSE` is AGPL
 - Confirm `.env.example` is present and real secrets are not committed
 - Run `bash scripts/check-security-claims.sh`
+- Run `bash scripts/run-e2e-harness.sh`
 - Confirm `docs/SECURITY_GUARANTEES.md` matches the current implementation line
 - Confirm docs distinguish broker-level guarantees from end-to-end host guarantees
+- Treat a failing or skipped Loop 5 harness run as a V2 release blocker
 - Confirm release notes do not claim transcript-safe integrations unless backed by passing end-to-end tests
 
 ## Linux release checklist
@@ -47,3 +49,5 @@ Windows is supported, but it is not the primary release target.
 - Do not market host transcript safety unless a supported end-to-end test proves it
 - Do not let host runtimes or agent sessions see plaintext secrets
 - Keep target allowlists and amount caps conservative
+- Confirm approval responses show masked review payloads and execution still requires the approved action and target
+- Confirm the local node-to-node harness is green before making V2 security claims

@@ -30,10 +30,12 @@ This doc describes the intended broker contract for OpenClaw-like host apps. It 
 - It does not claim transcript-safe host behavior.
 - It does not claim secure password entry through chat surfaces.
 - It does not claim a finished trusted-side browser-fill adapter.
+- It does not treat the local Loop 5 node-to-node harness as OpenClaw host certification.
 
 ## Drop-in contract
 
 - Agent intent goes in as `secret_ref`, `action`, `target`, and optional `amount_cents`.
 - Broker returns masked metadata, request IDs, and single-use capability tokens at request creation for auto-approved requests or in approval responses for pending ones.
-- Execution requires the one-time capability token.
+- Approval responses include a masked review payload with request type, masked secret ref, action, target, and reason.
+- Execution requires the one-time capability token plus the same approved `action` and `target`.
 - Broker API responses do not return plaintext secret values.

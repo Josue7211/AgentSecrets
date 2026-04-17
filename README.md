@@ -16,6 +16,7 @@ Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying o
 - Modes: `off`, `monitor`, `enforce`
 - Single-use capability tokens with TTL
 - Replay protection (`capability_used_at` lock)
+- Approval-time binding of request id, action, and target
 - Policy checks (target prefix allowlist, amount caps)
 - Automatic expiry of stale requests
 - Masked-only execution responses
@@ -30,7 +31,8 @@ Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying o
 - Plaintext secret values are rejected at request creation.
 - Rejected ingress attempts are audited without echoing the submitted secret content.
 - High-risk requests can require human approval.
-- Approvals are bound to request context and token TTL.
+- Approval responses include masked review payloads.
+- Approvals are bound to request id, action, target, and token TTL.
 - Capability tokens are one-time and invalid after execution.
 - External host-app transcript safety is **not** currently guaranteed by this repo.
 
@@ -45,6 +47,7 @@ Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying o
 - [src/policy.rs](src/policy.rs): validation and policy decisions
 - [src/audit.rs](src/audit.rs): append-only hash-chain audit logging
 - [migrations/0001_init.sql](migrations/0001_init.sql): source of truth for the initial schema
+- [migrations/0002_capability_binding.sql](migrations/0002_capability_binding.sql): approval-time capability binding fields
 
 ## API
 - `GET /healthz` (no auth)
@@ -133,6 +136,13 @@ docker run --rm -p 4815:4815 --env-file .env secret-broker
 cargo test
 ```
 
+Loop 5 node-to-node E2E harness:
+```bash
+bash scripts/run-e2e-harness.sh
+```
+
+Harness artifacts are written to `target/e2e-artifacts/` with redacted logs and summaries.
+
 Static checks:
 ```bash
 cargo fmt --all -- --check
@@ -158,9 +168,11 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 ## Example flow
 1. Agent creates request (`POST /v1/requests`).
 2. Approver approves (`POST /v1/requests/:id/approve`) and receives one-time capability token.
-3. Agent executes with capability (`POST /v1/execute`).
-4. Broker returns masked execution result only, including masked adapter summaries when the trusted adapter stub is enabled.
-5. Any transcript or chatbox safety claim still depends on the host integration, which is not yet fully implemented in this repo.
+3. Approval response includes masked review context (`request_type`, masked `secret_ref`, `action`, `target`, `reason`).
+4. Agent executes with capability (`POST /v1/execute`) and must present the approved `action` and `target`.
+5. Broker returns masked execution result only, including masked adapter summaries when the trusted adapter stub is enabled.
+6. Local Loop 5 node-to-node harness evidence now proves the broker response, untrusted helper transcripts, and persisted failure artifacts stay secret-free for the stubbed V2 flow.
+7. Any real host transcript or chatbox safety claim still depends on the host integration, which is not yet fully implemented in this repo.
 
 ## Integration notes
 - Any OpenClaw, Claude, Codex, or custom agent runtime should call broker instead of direct secret routes.

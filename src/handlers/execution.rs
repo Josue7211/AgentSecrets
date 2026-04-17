@@ -42,7 +42,8 @@ pub(crate) async fn execute_request(
     }
 
     let row: Option<ExecuteLookupRow> = sqlx::query_as(
-        "SELECT status, action, target, secret_ref, capability_hash, capability_expires_at
+        "SELECT status, action, target, secret_ref, capability_hash, capability_expires_at,
+                capability_request_id, capability_action, capability_target, capability_issued_at
          FROM secret_broker_requests
          WHERE id = ?
          LIMIT 1",
@@ -58,7 +59,18 @@ pub(crate) async fn execute_request(
         )
     })?;
 
-    let Some((status, action, target, secret_ref, capability_hash, capability_expires_at)) = row
+    let Some((
+        status,
+        action,
+        target,
+        secret_ref,
+        capability_hash,
+        capability_expires_at,
+        capability_request_id,
+        capability_action,
+        capability_target,
+        capability_issued_at,
+    )) = row
     else {
         return Err(err(StatusCode::NOT_FOUND, "not_found", "Request not found"));
     };
@@ -71,24 +83,20 @@ pub(crate) async fn execute_request(
         ));
     }
 
-    if let Some(ref expected_action) = body.action {
-        if expected_action != &action {
-            return Err(err(
-                StatusCode::FORBIDDEN,
-                "action_mismatch",
-                "Action mismatch",
-            ));
-        }
-    }
-    if let Some(ref expected_target) = body.target {
-        if expected_target != &target {
-            return Err(err(
-                StatusCode::FORBIDDEN,
-                "target_mismatch",
-                "Target mismatch",
-            ));
-        }
-    }
+    let Some(expected_action) = body.action.as_deref() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "action is required",
+        ));
+    };
+    let Some(expected_target) = body.target.as_deref() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "target is required",
+        ));
+    };
 
     let Some(stored_hash) = capability_hash else {
         return Err(err(
@@ -106,24 +114,192 @@ pub(crate) async fn execute_request(
         ));
     }
 
-    if let Some(ref expires) = capability_expires_at {
-        if let Some(exp_unix) = sqlite_datetime_to_unix(expires) {
-            if now_unix() > exp_unix {
-                sqlx::query(
-                    "UPDATE secret_broker_requests SET status = 'expired', updated_at = datetime('now') WHERE id = ?",
-                )
-                .bind(&body.id)
-                .execute(&*state.db)
-                .await
-                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "db_error", "Failed to expire request"))?;
+    let Some(bound_request_id) = capability_request_id.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_request_binding" }),
+        )
+        .await;
 
-                return Err(err(
-                    StatusCode::FORBIDDEN,
-                    "capability_expired",
-                    "Capability token expired",
-                ));
-            }
-        }
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(bound_action) = capability_action.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_action_binding" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(bound_target) = capability_target.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_target_binding" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(_issued_at) = capability_issued_at.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_issue_time" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(expires) = capability_expires_at.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_expiry" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+
+    if bound_request_id != body.id {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "request_binding_mismatch" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    }
+
+    if action != bound_action || expected_action != bound_action {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.execute_rejected",
+            Some(&body.id),
+            &json!({ "reason": "action_mismatch" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "action_mismatch",
+            "Action mismatch",
+        ));
+    }
+    if target != bound_target || expected_target != bound_target {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.execute_rejected",
+            Some(&body.id),
+            &json!({ "reason": "target_mismatch" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "target_mismatch",
+            "Target mismatch",
+        ));
+    }
+
+    let Some(exp_unix) = sqlite_datetime_to_unix(expires) else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "invalid_expiry" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+
+    if now_unix() > exp_unix {
+        sqlx::query(
+            "UPDATE secret_broker_requests
+             SET status = 'expired',
+                 capability_hash = NULL,
+                 capability_expires_at = NULL,
+                 capability_request_id = NULL,
+                 capability_action = NULL,
+                 capability_target = NULL,
+                 capability_issued_at = NULL,
+                 updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(&body.id)
+        .execute(&*state.db)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "db_error",
+                "Failed to expire request",
+            )
+        })?;
+
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_expired",
+            Some(&body.id),
+            &json!({ "reason": "expired" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "capability_expired",
+            "Capability token expired",
+        ));
     }
 
     let provider_resolution = match state.cfg.provider_bridge_mode {
@@ -281,6 +457,11 @@ pub(crate) async fn execute_request(
              capability_used_at = datetime('now'),
              execution_result = ?,
              capability_hash = NULL,
+             capability_expires_at = NULL,
+             capability_request_id = NULL,
+             capability_action = NULL,
+             capability_target = NULL,
+             capability_issued_at = NULL,
              updated_at = datetime('now')
          WHERE id = ? AND capability_used_at IS NULL",
     )
