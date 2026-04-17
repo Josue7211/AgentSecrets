@@ -27,6 +27,9 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Claim audit
+        run: bash scripts/check-security-claims.sh
+
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
