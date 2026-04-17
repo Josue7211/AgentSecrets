@@ -32,6 +32,9 @@ jobs:
       - name: Claim audit
         run: bash scripts/check-security-claims.sh
 
+      - name: External host ship gate summary
+        run: bash scripts/check-external-host-ship-gate.sh
+
       - name: Check
         run: cargo check --all-targets --all-features
 

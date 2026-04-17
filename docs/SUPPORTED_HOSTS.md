@@ -1,20 +1,27 @@
 # Supported Host Matrix
 
-This document is the V3 host-certification source of truth.
+This document is the V3 host-certification source of truth. It is the only external-host ship gate input.
 
 ## Certification states
 
 - `shipped`: host has current host-specific evidence and may be included in V3 end-to-end claims
-- `preview`: host contract exists, but host-specific certification is incomplete
+- `preview`: host contract exists, but host-specific certification is incomplete or stale
 - `unsupported`: do not make V3 end-to-end claims for this host
+
+## Freshness policy
+
+- Every `shipped` host must list current trusted-input, transcript/log redaction, adapter, identity, and known-limit evidence.
+- Evidence is current only when the row has a recent `Last verified` date and the host-specific evidence still matches the documented contract.
+- The external-host ship gate treats stale shipped evidence as `preview` until the row is refreshed.
+- Use `scripts/check-external-host-ship-gate.sh` to enforce the freshness and downgrade rules.
 
 ## Host matrix
 
-| Host | Status | Trusted input | Transcript/log redaction | Trusted adapters | Evidence | Known limits |
-| --- | --- | --- | --- | --- | --- | --- |
-| Local helper harness (`src/bin/e2e-node.rs`) | shipped | yes | yes | `password_fill`, `request_sign`, `credential_handoff` | `cargo test e2e_harness:: -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; not a user-facing product host |
-| OpenClaw-style HTTP host | shipped | yes | yes | `trusted-input`, `request`, `approve`, `execute` over the documented HTTP path | `cargo test openclaw_host_ -- --nocapture`, `bash scripts/run-openclaw-e2e.sh` | Certified only for the documented OpenClaw host path; see [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) |
-| Claude / Codex / arbitrary external runtimes | unsupported | no host-specific certification | no host-specific certification | no host-specific certification | none | Do not claim V3 end-to-end safety |
+| Host | Status | Trusted-input evidence | Transcript/log redaction evidence | Adapter evidence | Identity evidence | Last verified | Known limits |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Local helper harness (`src/bin/e2e-node.rs`) | shipped | `cargo test e2e_harness:: -- --nocapture` | `bash scripts/run-e2e-harness.sh` | `bash scripts/run-e2e-harness.sh` | `cargo test approval_payload_includes_verified_identity_summary -- --nocapture`, `cargo test execute_rejects_identity_mismatch_after_approval -- --nocapture` | `2026-04-17` | Repo-owned certification only; not a user-facing product host |
+| OpenClaw-style HTTP host | shipped | `cargo test openclaw_host_lane_covers_trusted_input_redaction_and_execution -- --nocapture`, `bash scripts/run-openclaw-e2e.sh` | `bash scripts/run-openclaw-e2e.sh` | `bash scripts/run-openclaw-e2e.sh` | `cargo test approval_payload_includes_verified_identity_summary -- --nocapture`, `cargo test create_request_rejects_missing_identity_headers_when_attestation_required -- --nocapture` | `2026-04-17` | Certified only for the documented OpenClaw host path; host process stays untrusted; see [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) |
+| Claude / Codex / arbitrary external runtimes | unsupported | no host-specific certification | no host-specific certification | no host-specific certification | no host-specific certification | n/a | Do not claim V3 end-to-end safety |
 
 ## Per-host threat notes
 
@@ -27,6 +34,7 @@ This document is the V3 host-certification source of truth.
   - trusted-input ingress must stay plaintext-free
   - helper transcript/log redaction must remain green
   - every shipped adapter path must have a green E2E case
+  - helper identity assertions must remain green in stub attestation mode
 
 ### OpenClaw-style HTTP host
 
@@ -34,7 +42,8 @@ This document is the V3 host-certification source of truth.
 - Untrusted sinks: transcript, stdout, stderr, structured logs, retry logs, tool-call payloads, and failure traces
 - Trusted contract: broker-issued opaque refs, masked approval payloads, and masked adapter results only
 - Certification status: shipped for the documented OpenClaw host path
-- Evidence: `cargo test openclaw_host_ -- --nocapture`, `bash scripts/run-openclaw-e2e.sh`
+- Evidence: `cargo test openclaw_host_lane_covers_trusted_input_redaction_and_execution -- --nocapture`, `bash scripts/run-openclaw-e2e.sh`
+- Identity boundary: current host certification relies on the broker-side identity contract and does not upgrade the OpenClaw process itself into a trusted identity source
 
 ### Unsupported external runtimes
 
@@ -45,5 +54,6 @@ This document is the V3 host-certification source of truth.
 ## Regression policy
 
 - If a shipped host loses its host-specific E2E evidence, downgrade it to `preview` or `unsupported`
-- If a host changes integration path or version in a way that changes transcript, log, trusted-input, or adapter behavior, re-run host review before keeping `shipped`
-- Do not move a host into `shipped` without adding its evidence and threat notes to this file
+- If a shipped host's evidence is older than 30 days, the external-host ship gate treats it as `preview` until refreshed
+- If a host changes integration path or version in a way that changes transcript, log, trusted-input, adapter, or identity behavior, re-run host review before keeping `shipped`
+- Do not move a host into `shipped` without adding its evidence, identity evidence, and threat notes to this file

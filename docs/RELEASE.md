@@ -12,6 +12,7 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Run `bash scripts/run-openclaw-e2e.sh`
 - Run `bash scripts/check-v2-ship-gate.sh`
 - Run `bash scripts/check-v3-ship-gate.sh`
+- Run `bash scripts/check-external-host-ship-gate.sh`
 - Run `bash scripts/check-v4-ship-gate.sh`
 - Run `bash scripts/run-rotation-recovery-drills.sh`
 - Run `bash scripts/run-adversarial-suite.sh pr`
@@ -52,8 +53,8 @@ Call V3 real only when every Loop 0 through Loop 4 line below is backed by curre
 | Loop 0 | trusted-input sessions mint one-time broker opaque refs and keep plaintext out of the agent-visible request path | `cargo test --all-targets --all-features -- --nocapture` |
 | Loop 1 | supported-host helper and certified OpenClaw transcript and log redaction remain fail-closed and green | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
 | Loop 2 | sanctioned adapter registry supports the documented helper paths and the certified OpenClaw host path without exposing plaintext | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
-| Loop 3 | supported hosts and excluded hosts are truthful in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) | `bash scripts/check-v3-ship-gate.sh` |
-| Loop 4 | release notes and release docs limit V3 claims to shipped hosts with current evidence | `bash scripts/check-v3-ship-gate.sh` |
+| Loop 3 | supported hosts and excluded hosts are truthful in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) | `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` |
+| Loop 4 | release notes and release docs limit V3 claims to shipped hosts with current evidence | `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` |
 
 V3 release authority is the combination of:
 
@@ -61,6 +62,18 @@ V3 release authority is the combination of:
 - the [supported host matrix](docs/SUPPORTED_HOSTS.md)
 - the [V3 release-note claims table](#v3-release-note-claims-table)
 - completed [V3 manual signoff](#v3-manual-signoff)
+
+## External host ship gate
+
+Call the external-host ship gate before any release or claim that mentions a shipped external host:
+
+- `bash scripts/check-external-host-ship-gate.sh`
+
+The gate is the release truth for [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
+
+- It fails if any `shipped` host is missing current trusted-input, transcript/log redaction, adapter, identity, or known-limit evidence.
+- It fails if a shipped host's evidence is stale and downgrades that host to `preview` until the row is refreshed.
+- It prints the current shipped/preview/unsupported host table in CI on every run.
 
 ## V2 support matrix
 
@@ -94,7 +107,7 @@ Use this table verbatim or keep release notes materially equivalent.
 | --- | --- | --- | --- |
 | Supported hosts can use broker-owned trusted-input sessions to keep plaintext out of the agent-visible request path | allowed | `cargo test --all-targets --all-features -- --nocapture` | This is still bounded to the hosts and paths listed in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) |
 | The local helper harness path supports masked `password_fill`, `request_sign`, and `credential_handoff` flows without exposing plaintext to helper transcripts or artifacts | allowed | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; not a blanket claim for external runtimes |
-| OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | allowed | `bash scripts/run-openclaw-e2e.sh`, `bash scripts/check-v3-ship-gate.sh` | Only the documented OpenClaw host path is certified |
+| OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | allowed | `bash scripts/run-openclaw-e2e.sh`, `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` | Only the documented OpenClaw host path is certified |
 | Claude, Codex, or arbitrary external runtimes are certified transcript-safe V3 hosts | blocked | none in this repo | Remove this line from V3 release notes |
 | Production browser automation or production provider mediation ships in V3 | blocked | none in this repo | Keep adapter claims at the documented helper-path contract |
 
@@ -117,7 +130,7 @@ Both signoffs are required before tagging or deployment:
 
 - Host matrix review signoff:
   - confirm [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) matches the current host evidence
-  - confirm every `shipped` host has current trusted-input, transcript/log, and adapter evidence
+  - confirm every `shipped` host has current trusted-input, transcript/log, adapter, identity, and known-limit evidence
   - confirm every preview or unsupported host stays out of the V3 claim set
 - Claims and regression review signoff:
   - confirm `docs/SECURITY_GUARANTEES.md`, this release checklist, and release notes all say the same thing
