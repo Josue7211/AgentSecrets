@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
@@ -8,6 +9,12 @@ use serde_json::{json, Value};
 enum RedactionMode {
     Off,
     Supported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResultMode {
+    Raw,
+    Redacted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +104,41 @@ impl TranscriptRedactor {
 
         output
     }
+}
+
+fn result_mode() -> ResultMode {
+    match std::env::var("SECRET_BROKER_E2E_RESULT_MODE")
+        .unwrap_or_else(|_| "raw".to_string())
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "redacted" => ResultMode::Redacted,
+        _ => ResultMode::Raw,
+    }
+}
+
+fn result_sidecar_path() -> Option<PathBuf> {
+    std::env::var("SECRET_BROKER_E2E_RESULT_PATH")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+fn emit_result(redactor: &TranscriptRedactor, body: Value) -> Result<()> {
+    let raw = body.to_string();
+
+    if let Some(path) = result_sidecar_path() {
+        std::fs::write(&path, &raw)
+            .with_context(|| format!("failed to write result sidecar at {}", path.display()))?;
+    }
+
+    match result_mode() {
+        ResultMode::Raw => println!("RESULT_JSON={raw}"),
+        ResultMode::Redacted => redactor.print(&format!("RESULT_JSON={}", redactor.sanitize(&raw))),
+    }
+
+    Ok(())
 }
 
 impl HostKind {
@@ -223,8 +265,8 @@ async fn create_request(
         "{}:create body={json_body}",
         host.transcript_prefix()
     ));
-    println!(
-        "RESULT_JSON={}",
+    emit_result(
+        redactor,
         json!({
             "host": host.label(),
             "status": status,
@@ -238,9 +280,8 @@ async fn create_request(
                 }
             },
             "id": json_body["data"]["id"]
-        })
-    );
-    Ok(())
+        }),
+    )
 }
 
 async fn approve_request(
@@ -278,16 +319,15 @@ async fn approve_request(
         "{}:approve body={json_body}",
         host.transcript_prefix()
     ));
-    println!(
-        "RESULT_JSON={}",
+    emit_result(
+        redactor,
         json!({
             "host": host.label(),
             "status": status,
             "body": json_body,
             "capability_token": json_body["data"]["capability_token"]
-        })
-    );
-    Ok(())
+        }),
+    )
 }
 
 async fn execute_request(
@@ -334,15 +374,14 @@ async fn execute_request(
         "{}:execute body={json_body}",
         host.transcript_prefix()
     ));
-    println!(
-        "RESULT_JSON={}",
+    emit_result(
+        redactor,
         json!({
             "host": host.label(),
             "status": status,
             "body": json_body
-        })
-    );
-    Ok(())
+        }),
+    )
 }
 
 async fn trusted_input_start(
@@ -392,8 +431,8 @@ async fn trusted_input_start(
         "{}:trusted-start body={json_body}",
         host.transcript_prefix()
     ));
-    println!(
-        "RESULT_JSON={}",
+    emit_result(
+        redactor,
         json!({
             "host": host.label(),
             "status": status,
@@ -409,9 +448,8 @@ async fn trusted_input_start(
             },
             "id": json_body["data"]["id"],
             "completion_token": json_body["data"]["completion_token"]
-        })
-    );
-    Ok(())
+        }),
+    )
 }
 
 async fn trusted_input_complete(
@@ -457,8 +495,8 @@ async fn trusted_input_complete(
         "{}:trusted-complete body={json_body}",
         host.transcript_prefix()
     ));
-    println!(
-        "RESULT_JSON={}",
+    emit_result(
+        redactor,
         json!({
             "host": host.label(),
             "status": status,
@@ -471,7 +509,6 @@ async fn trusted_input_complete(
                 }
             },
             "opaque_ref": json_body["data"]["opaque_ref"]
-        })
-    );
-    Ok(())
+        }),
+    )
 }

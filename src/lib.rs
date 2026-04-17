@@ -1073,6 +1073,56 @@ mod tests {
         })
     }
 
+    async fn run_openclaw_e2e_node_with_env(
+        args: &[String],
+        envs: &[(&str, &str)],
+    ) -> anyhow::Result<NodeInvocation> {
+        ensure_e2e_binaries_built()?;
+
+        let result_file = NamedTempFile::new_in("target/e2e-artifacts")
+            .context("failed to allocate openclaw result sidecar")?;
+        let result_path = result_file.path().to_path_buf();
+
+        let mut command = Command::new(e2e_binary_path("e2e-node"));
+        command.current_dir(repo_root()).args(args);
+        command.env("SECRET_BROKER_E2E_RESULT_MODE", "redacted");
+        command.env(
+            "SECRET_BROKER_E2E_RESULT_PATH",
+            result_path.to_string_lossy().to_string(),
+        );
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+
+        let output = command
+            .output()
+            .await
+            .context("failed to run e2e-node helper")?;
+
+        let stdout = String::from_utf8(output.stdout).context("stdout must be utf-8")?;
+        let stderr = String::from_utf8(output.stderr).context("stderr must be utf-8")?;
+
+        if !output.status.success() {
+            anyhow::bail!("e2e-node failed\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        }
+
+        let result_text = fs::read_to_string(&result_path).with_context(|| {
+            format!(
+                "missing openclaw result sidecar at {}",
+                result_path.display()
+            )
+        })?;
+        let result = serde_json::from_str(&result_text).context("openclaw result decode failed")?;
+
+        drop(result_file);
+
+        Ok(NodeInvocation {
+            stdout,
+            stderr,
+            result,
+        })
+    }
+
     async fn run_node_to_node_scenario(
         label: &str,
         execute_action: &str,
@@ -1588,10 +1638,11 @@ mod tests {
         let artifact_dir = new_artifact_dir("openclaw-host-happy-path")?;
         let fixture_secret = "stub-secret-material".to_string();
         let canary = "openclaw-canary-secret";
+        let provider_secret_ref = "bw://vault/item/login".to_string();
 
         let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
 
-        let trusted_start = run_e2e_node_with_env(
+        let trusted_start = run_openclaw_e2e_node_with_env(
             &[
                 host_command("openclaw-", "trusted-start"),
                 "--broker-url".to_string(),
@@ -1622,7 +1673,7 @@ mod tests {
             .context("trusted start result missing completion token")?
             .to_string();
 
-        let trusted_complete = run_e2e_node_with_env(
+        let trusted_complete = run_openclaw_e2e_node_with_env(
             &[
                 host_command("openclaw-", "trusted-complete"),
                 "--broker-url".to_string(),
@@ -1632,9 +1683,9 @@ mod tests {
                 "--id".to_string(),
                 session_id,
                 "--completion-token".to_string(),
-                completion_token,
+                completion_token.clone(),
                 "--secret-ref".to_string(),
-                "bw://vault/item/login".to_string(),
+                provider_secret_ref.clone(),
             ],
             &[
                 ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
@@ -1647,7 +1698,7 @@ mod tests {
             .context("trusted complete result missing opaque ref")?
             .to_string();
 
-        let create = run_e2e_node_with_env(
+        let create = run_openclaw_e2e_node_with_env(
             &[
                 host_command("openclaw-", "create"),
                 "--broker-url".to_string(),
@@ -1676,7 +1727,7 @@ mod tests {
             .context("create result missing request id")?
             .to_string();
 
-        let approve = run_e2e_node_with_env(
+        let approve = run_openclaw_e2e_node_with_env(
             &[
                 host_command("openclaw-", "approve"),
                 "--broker-url".to_string(),
@@ -1697,7 +1748,7 @@ mod tests {
             .context("approve result missing capability token")?
             .to_string();
 
-        let execute = run_e2e_node_with_env(
+        let execute = run_openclaw_e2e_node_with_env(
             &[
                 host_command("openclaw-", "execute"),
                 "--broker-url".to_string(),
@@ -1729,52 +1780,116 @@ mod tests {
         write_redacted_artifact(
             &artifact_dir.join("trusted-start.stdout.log"),
             &trusted_start.stdout,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("trusted-start.stderr.log"),
             &trusted_start.stderr,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("trusted-complete.stdout.log"),
             &trusted_complete.stdout,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("trusted-complete.stderr.log"),
             &trusted_complete.stderr,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("client.stdout.log"),
             &create.stdout,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &opaque_ref,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("client.stderr.log"),
             &create.stderr,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &opaque_ref,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("approver.stdout.log"),
             &approve.stdout,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &opaque_ref,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("approver.stderr.log"),
             &approve.stderr,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &opaque_ref,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("execute.stdout.log"),
             &execute.stdout,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &opaque_ref,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("execute.stderr.log"),
             &execute.stderr,
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &opaque_ref,
+                &provider_secret_ref,
+            ],
         )?;
         write_redacted_artifact(
             &artifact_dir.join("summary.json"),
@@ -1790,7 +1905,14 @@ mod tests {
                 "execute": execute_result
             })
             .to_string(),
-            &[&fixture_secret, &capability_token],
+            &[
+                &fixture_secret,
+                &canary,
+                &completion_token,
+                &capability_token,
+                &opaque_ref,
+                &provider_secret_ref,
+            ],
         )?;
 
         stop_broker(broker_child).await?;
@@ -3337,6 +3459,11 @@ mod tests {
             assert_eq!(outcome.execute_result["host"], "openclaw");
             assert_eq!(outcome.trusted_start_result["status"], 200);
             assert_eq!(outcome.trusted_complete_result["status"], 200);
+            let completion_token = outcome.trusted_start_result["completion_token"]
+                .as_str()
+                .context("openclaw completion token missing")?;
+            let canary = "openclaw-canary-secret";
+            let provider_secret_ref = "bw://vault/item/login";
             assert!(
                 outcome.create_result["body"]["data"]["secret_ref_masked"]
                     .as_str()
@@ -3365,29 +3492,37 @@ mod tests {
             assert!(!outcome
                 .trusted_complete_result
                 .to_string()
-                .contains("bw://vault/item/login"));
+                .contains(provider_secret_ref));
             assert!(!outcome
                 .execute_result
                 .to_string()
                 .contains("stub-secret-material"));
-            assert_secret_free(&outcome.trusted_start_stdout, &outcome.fixture_secret);
-            assert_secret_free(&outcome.trusted_start_stderr, &outcome.fixture_secret);
-            assert_secret_free(&outcome.trusted_complete_stdout, &outcome.fixture_secret);
-            assert_secret_free(&outcome.trusted_complete_stderr, &outcome.fixture_secret);
-            assert_secret_free(&outcome.create_stdout, &outcome.fixture_secret);
-            assert_secret_free(&outcome.create_stderr, &outcome.fixture_secret);
-            assert_secret_free(&outcome.approver_stdout, &outcome.fixture_secret);
-            assert_secret_free(&outcome.approver_stderr, &outcome.fixture_secret);
-            assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
-            assert_secret_free(&outcome.execute_stderr, &outcome.fixture_secret);
-            assert_secret_free(&summary, &outcome.fixture_secret);
-            assert_secret_free(&trusted_start_stdout, &outcome.fixture_secret);
-            assert_secret_free(&trusted_complete_stdout, &outcome.fixture_secret);
-            assert_secret_free(&create_stdout, &outcome.fixture_secret);
-            assert_secret_free(&approver_stdout, &outcome.fixture_secret);
-            assert_secret_free(&execute_stdout, &outcome.fixture_secret);
-            assert!(!trusted_complete_stdout.contains("bw://vault/item/login"));
-            assert!(!execute_stdout.contains("stub-secret-material"));
+            for sink in [
+                &outcome.trusted_start_stdout,
+                &outcome.trusted_start_stderr,
+                &outcome.trusted_complete_stdout,
+                &outcome.trusted_complete_stderr,
+                &outcome.create_stdout,
+                &outcome.create_stderr,
+                &outcome.approver_stdout,
+                &outcome.approver_stderr,
+                &outcome.execute_stdout,
+                &outcome.execute_stderr,
+                &summary,
+                &trusted_start_stdout,
+                &trusted_complete_stdout,
+                &create_stdout,
+                &approver_stdout,
+                &execute_stdout,
+            ] {
+                assert_secret_free(sink, &outcome.fixture_secret);
+                assert!(!sink.contains(canary));
+                assert!(!sink.contains(completion_token));
+                assert!(!sink.contains(&outcome.capability_token));
+                assert!(!sink.contains(&outcome.opaque_ref));
+                assert!(!sink.contains(provider_secret_ref));
+                assert!(!sink.contains("RESULT_JSON={\"host\":\"openclaw\""));
+            }
 
             Ok(())
         }
