@@ -2,7 +2,7 @@
 
 This document is the source of truth for what AgentSecrets currently guarantees, what it only partially implements, and what it does not yet solve.
 
-## Implemented on the current line
+## Implemented in the current repo state
 
 - Broker API responses do not return plaintext secret values.
 - Request and approval flows use separate `client` and `approver` roles.
@@ -25,7 +25,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Full Bitwarden mediation implemented in this repo.
 - End-to-end node-to-node verification across real host integrations.
 
-## Supported trust claim on the current line
+## Supported trust claim in the current repo state
 
 AgentSecrets currently provides broker-level no-plaintext-response guarantees. It does **not** yet provide a complete end-to-end zero-trust secret-use system for external host apps.
 

@@ -7,7 +7,7 @@ Allow Claude, Codex, OpenClaw, and other agents to request secret-dependent acti
 
 ## Security Guarantees
 
-The current line provides **broker-level no-plaintext-response guarantees**. It does **not** yet provide a complete end-to-end transcript-safe zero-trust system for external host apps.
+The current implementation provides **broker-level no-plaintext-response guarantees**. It does **not** yet provide a complete end-to-end transcript-safe zero-trust system for external host apps.
 
 Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying on any security property.
 
