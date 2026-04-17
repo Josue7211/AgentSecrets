@@ -35,7 +35,7 @@ This repo is intended to evolve into an end-to-end zero-trust secret-use system.
 
 - Prompt injection that tries to coerce the broker flow into revealing secrets.
 - Stolen or replayed capability tokens.
-- Direct provider access from untrusted runtimes.
+- Direct provider access from untrusted runtimes must remain out of the system path.
 - Tampering with request history or audit records.
 - Security overclaiming in docs and release notes.
 

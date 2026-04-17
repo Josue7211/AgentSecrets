@@ -5,7 +5,7 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 ## Shared checklist
 
 - Confirm the repo still builds: `cargo fmt --all -- --check`, `cargo check`, `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`
-- Confirm `LICENSE` is Apache 2.0
+- Confirm `LICENSE` is AGPL
 - Confirm `.env.example` is present and real secrets are not committed
 - Run `bash scripts/check-security-claims.sh`
 - Confirm `docs/SECURITY_GUARANTEES.md` matches the current implementation line
