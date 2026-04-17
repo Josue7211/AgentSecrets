@@ -24,10 +24,11 @@ Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying o
 
 ## Security model
 - Agent runtimes are treated as untrusted.
-- Raw secrets are never returned by API responses.
+- Broker API responses do not return plaintext secret values.
 - High-risk requests can require human approval.
 - Approvals are bound to request context and token TTL.
 - Capability tokens are one-time and invalid after execution.
+- External host-app transcript safety is **not** currently guaranteed by this repo.
 
 ## Code layout
 - [src/lib.rs](src/lib.rs): config, DB init, router wiring, runtime entrypoint
@@ -146,6 +147,7 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 2. Approver approves (`POST /v1/requests/:id/approve`) and receives one-time capability token.
 3. Agent executes with capability (`POST /v1/execute`).
 4. Broker returns masked execution result only.
+5. Any transcript or chatbox safety claim still depends on the host integration, which is not yet fully implemented in this repo.
 
 ## Integration notes
 - Any OpenClaw, Claude, Codex, or custom agent runtime should call broker instead of direct secret routes.

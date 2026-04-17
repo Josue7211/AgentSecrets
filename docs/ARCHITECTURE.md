@@ -1,17 +1,25 @@
 # Architecture
 
-## Trust boundaries
-1. Agent runtime (untrusted)
-2. Broker API (policy + approvals)
-3. Secret provider adapters (Bitwarden, keychain, HSM)
-4. Optional execution adapters (browser fill, signing, send)
+## Current implemented boundary
 
-## Contract
+1. Agent runtime (untrusted)
+2. Broker API (policy, approvals, capability issuance, masked execution responses)
+
+## Target boundary for future versions
+
+3. Trusted secret provider adapters (Bitwarden, keychain, HSM)
+4. Trusted execution adapters (browser fill, signing, send)
+5. Supported host integrations with transcript-safe behavior
+
+## Current contract
+
 - Input: action intent and context
-- Output: allow/deny + masked metadata
-- No plaintext secret responses
+- Output: allow or deny plus masked metadata
+- No plaintext secret responses from broker APIs
+- No current guarantee of transcript-safe host behavior
 
 ## Modes
-- `off`: legacy passthrough mode (for migration)
+
+- `off`: legacy passthrough mode for migration
 - `monitor`: records and auto-approves
-- `enforce`: approval + policy required
+- `enforce`: approval plus policy required
