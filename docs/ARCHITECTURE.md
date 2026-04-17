@@ -14,7 +14,7 @@
 ## Current contract
 
 - Input: action intent and context
-- Output: allow or deny plus masked metadata
+- Output: allow or deny, masked metadata, and bounded capability material where the approval flow issues it
 - No plaintext secret responses from broker APIs
 - No current guarantee of transcript-safe host behavior
 
