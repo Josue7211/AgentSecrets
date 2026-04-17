@@ -95,18 +95,18 @@ Approval contract:
 
 ## Host-app integration rule
 
-Treat any OpenClaw-like host app as an untrusted runtime unless it is the certified OpenClaw host path:
+Treat any OpenClaw-like host app as an untrusted runtime unless it is the documented OpenClaw preview path:
 
 - Give the host app only the **client** key.
 - Never give the host app the approver key.
 - Restrict host egress so it can only reach the broker and allowed APIs.
 - Do not let the host app talk directly to Bitwarden.
 - If the host wants transcript-safer ingress, keep plaintext entry inside the trusted-input completion path and return only the broker opaque ref to the agent-visible runtime.
-- If the host also claims transcript or log redaction, define sink classification and fail-closed behavior explicitly. Use [docs/REDACTION_POLICY.md](docs/REDACTION_POLICY.md) as the current repo-owned example and [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) for the certified OpenClaw sink model.
+- If the host also claims transcript or log redaction, define sink classification and fail-closed behavior explicitly. Use [docs/REDACTION_POLICY.md](docs/REDACTION_POLICY.md) as the current repo-owned example and [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) for the documented OpenClaw sink model.
 - If `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub`, hosts must attach signed identity headers for runtime, host, adapter, timestamp, and signature.
 - Do not claim transcript safety beyond the tested path unless an end-to-end test proves it for that host.
 - Keep trusted-side provider placement and trusted execution adapter placement beside the broker, not inside the host runtime.
-- OpenClaw is the certified host exception only for the documented broker HTTP path in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
+- OpenClaw remains the preview host exception only for the documented broker HTTP path in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
 - Other OpenClaw-like runtimes remain untrusted until they have their own host-specific evidence.
 
 ## Recommended rollout

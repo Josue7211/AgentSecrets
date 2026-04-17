@@ -1,6 +1,6 @@
 # OpenClaw Integration
 
-OpenClaw is the first certified external host path in this repo, but only for the documented broker HTTP contract. The host process itself stays untrusted. The certification boundary is the OpenClaw runtime talking to the broker over HTTP with the client key, plus the separate approver channel for approvals.
+OpenClaw is a documented external host path in this repo, but it remains `preview` until Task 2 adds real OpenClaw-specific identity evidence. The host process itself stays untrusted. The current boundary is the OpenClaw runtime talking to the broker over HTTP with the client key, plus the separate approver channel for approvals.
 
 Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the status source of truth and [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) for the sink and failure-path details.
 
@@ -37,4 +37,4 @@ Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the status source of t
 - `bash scripts/check-v3-ship-gate.sh`
 - `cargo test --all-targets --all-features -- --nocapture`
 
-If this evidence goes red, downgrade OpenClaw back to `preview` and remove any shipped claim until the lane is green again.
+If this evidence goes red, keep OpenClaw at `preview` and remove any shipped claim until the lane is green again and identity evidence exists.

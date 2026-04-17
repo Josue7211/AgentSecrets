@@ -51,8 +51,8 @@ Call V3 real only when every Loop 0 through Loop 4 line below is backed by curre
 | Loop | Required line | Required evidence |
 | --- | --- | --- |
 | Loop 0 | trusted-input sessions mint one-time broker opaque refs and keep plaintext out of the agent-visible request path | `cargo test --all-targets --all-features -- --nocapture` |
-| Loop 1 | supported-host helper and certified OpenClaw transcript and log redaction remain fail-closed and green | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
-| Loop 2 | sanctioned adapter registry supports the documented helper paths and the certified OpenClaw host path without exposing plaintext | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
+| Loop 1 | supported-host helper and preview OpenClaw transcript and log redaction remain fail-closed and green | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
+| Loop 2 | sanctioned adapter registry supports the documented helper paths and the preview OpenClaw host path without exposing plaintext | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
 | Loop 3 | supported hosts and excluded hosts are truthful in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) | `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` |
 | Loop 4 | release notes and release docs limit V3 claims to shipped hosts with current evidence | `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` |
 
@@ -107,7 +107,7 @@ Use this table verbatim or keep release notes materially equivalent.
 | --- | --- | --- | --- |
 | Supported hosts can use broker-owned trusted-input sessions to keep plaintext out of the agent-visible request path | allowed | `cargo test --all-targets --all-features -- --nocapture` | This is still bounded to the hosts and paths listed in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) |
 | The local helper harness path supports masked `password_fill`, `request_sign`, and `credential_handoff` flows without exposing plaintext to helper transcripts or artifacts | allowed | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; not a blanket claim for external runtimes |
-| OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | allowed | `bash scripts/run-openclaw-e2e.sh`, `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` | Only the documented OpenClaw host path is certified |
+| OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | blocked | `bash scripts/run-openclaw-e2e.sh`, `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` | Keep OpenClaw preview until Task 2 adds host-specific identity evidence |
 | Claude, Codex, or arbitrary external runtimes are certified transcript-safe V3 hosts | blocked | none in this repo | Remove this line from V3 release notes |
 | Production browser automation or production provider mediation ships in V3 | blocked | none in this repo | Keep adapter claims at the documented helper-path contract |
 
@@ -217,5 +217,5 @@ Windows is supported, but it is not the primary release target.
 - Do not let host runtimes or agent sessions see plaintext secrets
 - Keep target allowlists and amount caps conservative
 - Confirm approval responses show masked review payloads and execution still requires the approved action and target
-- Confirm the OpenClaw lane is green before claiming OpenClaw host certification
+- Confirm the OpenClaw lane is green before claiming OpenClaw preview evidence
 - Confirm the local node-to-node harness is green before making V2 security claims

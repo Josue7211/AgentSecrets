@@ -80,7 +80,7 @@ for line_no, line in enumerate(text[header_idx + 2 :], start=header_idx + 3):
             file=sys.stderr,
         )
         raise SystemExit(1)
-    row = dict(zip(headers, cells))
+    row = {normalized_headers[idx]: cells[idx] for idx in range(len(cells))}
     rows.append(row)
     table_seen = True
 
@@ -154,7 +154,7 @@ def host_policy(host: str) -> dict[str, tuple[str, ...]]:
             "Trusted-input evidence": ("openclaw_host", "run-openclaw-e2e.sh", "trusted_input"),
             "Transcript/log redaction evidence": ("run-openclaw-e2e.sh", "openclaw"),
             "Adapter evidence": ("run-openclaw-e2e.sh", "openclaw"),
-            "Identity evidence": ("identity", "attestation"),
+            "Identity evidence": ("openclaw", "identity"),
         }
     return {}
 
@@ -166,8 +166,8 @@ def require_evidence(host: str, field: str, value: str, tokens: tuple[str, ...])
     return None
 
 for row in rows:
-    host = row.get("Host", "").strip()
-    declared_status = row.get("Status", "").strip().lower()
+    host = row.get(norm("Host"), "").strip()
+    declared_status = row.get(norm("Status"), "").strip().lower()
     current_status = declared_status
     row_issues: list[str] = []
 
@@ -184,11 +184,13 @@ for row in rows:
             current_status = "preview"
         else:
             for field, tokens in policy.items():
-                issue = require_evidence(host, field, row.get(field, "").strip(), tokens)
+                issue = require_evidence(
+                    host, field, row.get(norm(field), "").strip(), tokens
+                )
                 if issue:
                     row_issues.append(issue)
 
-        known_limits = row.get("Known limits", "").strip()
+        known_limits = row.get(norm("Known limits"), "").strip()
         if not known_limits:
             row_issues.append(f"{host}: shipped host is missing Known limits")
         elif not looks_like_limit_statement(known_limits):
@@ -196,7 +198,7 @@ for row in rows:
                 f"{host}: shipped host Known limits is too vague to be a real limit statement: {known_limits!r}"
             )
 
-        last_verified = parse_date(row.get("Last verified", ""))
+        last_verified = parse_date(row.get(norm("Last verified"), ""))
         if last_verified is None:
             row_issues.append(f"{host}: shipped host has invalid or missing Last verified date")
         else:
@@ -224,14 +226,14 @@ for row in rows:
         {
             "Host": host,
             "Status": current_status,
-            "Trusted-input evidence": row.get("Trusted-input evidence", "").strip(),
+            "Trusted-input evidence": row.get(norm("Trusted-input evidence"), "").strip(),
             "Transcript/log redaction evidence": row.get(
-                "Transcript/log redaction evidence", ""
+                norm("Transcript/log redaction evidence"), ""
             ).strip(),
-            "Adapter evidence": row.get("Adapter evidence", "").strip(),
-            "Identity evidence": row.get("Identity evidence", "").strip(),
-            "Last verified": row.get("Last verified", "").strip(),
-            "Known limits": row.get("Known limits", "").strip(),
+            "Adapter evidence": row.get(norm("Adapter evidence"), "").strip(),
+            "Identity evidence": row.get(norm("Identity evidence"), "").strip(),
+            "Last verified": row.get(norm("Last verified"), "").strip(),
+            "Known limits": row.get(norm("Known limits"), "").strip(),
         }
     )
 

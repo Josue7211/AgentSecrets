@@ -20,7 +20,7 @@ This document is the V3 host-certification source of truth. It is the only exter
 | Host | Status | Trusted-input evidence | Transcript/log redaction evidence | Adapter evidence | Identity evidence | Last verified | Known limits |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Local helper harness (`src/bin/e2e-node.rs`) | shipped | `cargo test e2e_harness:: -- --nocapture` | `bash scripts/run-e2e-harness.sh` | `bash scripts/run-e2e-harness.sh` | `cargo test approval_payload_includes_verified_identity_summary -- --nocapture`, `cargo test execute_rejects_identity_mismatch_after_approval -- --nocapture` | `2026-04-17` | Repo-owned certification only; not a user-facing product host |
-| OpenClaw-style HTTP host | shipped | `cargo test openclaw_host_lane_covers_trusted_input_redaction_and_execution -- --nocapture`, `bash scripts/run-openclaw-e2e.sh` | `bash scripts/run-openclaw-e2e.sh` | `bash scripts/run-openclaw-e2e.sh` | `cargo test approval_payload_includes_verified_identity_summary -- --nocapture`, `cargo test create_request_rejects_missing_identity_headers_when_attestation_required -- --nocapture` | `2026-04-17` | Certified only for the documented OpenClaw host path; host process stays untrusted; see [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) |
+| OpenClaw-style HTTP host | preview | `cargo test openclaw_host_lane_covers_trusted_input_redaction_and_execution -- --nocapture`, `bash scripts/run-openclaw-e2e.sh` | `bash scripts/run-openclaw-e2e.sh` | `bash scripts/run-openclaw-e2e.sh` | no host-specific identity evidence yet; generic broker identity tests do not certify the OpenClaw runtime | `2026-04-17` | Documented host path remains preview until Task 2 provides real OpenClaw-specific identity evidence; host process stays untrusted; see [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) |
 | Claude / Codex / arbitrary external runtimes | unsupported | no host-specific certification | no host-specific certification | no host-specific certification | no host-specific certification | n/a | Do not claim V3 end-to-end safety |
 
 ## Per-host threat notes
@@ -41,9 +41,9 @@ This document is the V3 host-certification source of truth. It is the only exter
 - Trust boundary: OpenClaw stays untrusted and only talks to the broker API over the documented HTTP contract
 - Untrusted sinks: transcript, stdout, stderr, structured logs, retry logs, tool-call payloads, and failure traces
 - Trusted contract: broker-issued opaque refs, masked approval payloads, and masked adapter results only
-- Certification status: shipped for the documented OpenClaw host path
+- Certification status: preview for the documented OpenClaw host path
 - Evidence: `cargo test openclaw_host_lane_covers_trusted_input_redaction_and_execution -- --nocapture`, `bash scripts/run-openclaw-e2e.sh`
-- Identity boundary: current host certification relies on the broker-side identity contract and does not upgrade the OpenClaw process itself into a trusted identity source
+- Identity boundary: current broker identity tests do not certify the OpenClaw process itself; Task 2 must add real OpenClaw-specific identity evidence before this host can be shipped
 
 ### Unsupported external runtimes
 

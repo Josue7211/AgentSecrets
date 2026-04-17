@@ -35,12 +35,13 @@ require_grep 'This document is the V3 host-certification source of truth.' docs/
 require_grep 'It is the only external-host ship gate input.' docs/SUPPORTED_HOSTS.md
 require_grep '## Freshness policy' docs/SUPPORTED_HOSTS.md
 require_grep 'Local helper harness (`src/bin/e2e-node.rs`) | shipped' docs/SUPPORTED_HOSTS.md
-require_grep 'OpenClaw-style HTTP host | shipped' docs/SUPPORTED_HOSTS.md
+require_grep 'OpenClaw-style HTTP host | preview' docs/SUPPORTED_HOSTS.md
+require_grep 'no host-specific identity evidence yet; generic broker identity tests do not certify the OpenClaw runtime' docs/SUPPORTED_HOSTS.md
 require_grep 'bash scripts/run-openclaw-e2e.sh' docs/SUPPORTED_HOSTS.md
 require_grep 'Claude / Codex / arbitrary external runtimes | unsupported' docs/SUPPORTED_HOSTS.md
 
 require_grep 'Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) to decide which hosts are actually release-eligible for V3 end-to-end claims.' docs/INTEGRATION.md
-require_grep 'OpenClaw is the certified host exception only for the documented broker HTTP path' docs/INTEGRATION.md
+require_grep 'OpenClaw remains the preview host exception only for the documented broker HTTP path' docs/INTEGRATION.md
 require_grep 'Use the V3 ship gate in [docs/RELEASE.md](docs/RELEASE.md#v3-ship-gate) plus [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) before any V3 supported-host claim' docs/INTEGRATION.md
 require_grep 'docs/OPENCLAW_THREAT_NOTES.md' docs/INTEGRATION.md
 
@@ -49,5 +50,6 @@ require_grep 'Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only
 
 require_grep 'V3 ship gate summary' .github/workflows/ci.yml
 require_grep 'External host ship gate summary' .github/workflows/ci.yml
+require_grep 'OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | blocked' docs/RELEASE.md
 
 echo "v3-ship-gate: ok"

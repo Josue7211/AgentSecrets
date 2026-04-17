@@ -1,6 +1,6 @@
 # OpenClaw Threat Notes
 
-These notes cover the certified OpenClaw host path only. Anything outside the documented broker HTTP contract remains untrusted and out of scope.
+These notes cover the documented OpenClaw host path only. It remains `preview` until Task 2 adds OpenClaw-specific identity evidence. Anything outside the documented broker HTTP contract remains untrusted and out of scope.
 
 ## Sink classification
 
@@ -43,4 +43,4 @@ All of those sinks are untrusted. They must only contain masked data, opaque ref
 
 ## Certification note
 
-OpenClaw is shipped only for the documented host path and only while the OpenClaw E2E lane stays green. If the lane regresses, treat OpenClaw as `preview` again until the evidence is restored.
+OpenClaw is preview only for the documented host path and only while the OpenClaw E2E lane stays green. If the lane regresses, keep OpenClaw at `preview` until the evidence is restored and host-specific identity evidence exists.
