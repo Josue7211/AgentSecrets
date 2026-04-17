@@ -21,6 +21,15 @@ pub(crate) struct AdapterHealth {
     pub(crate) adapter: &'static str,
     pub(crate) configured: bool,
     pub(crate) ready: bool,
+    pub(crate) supported_actions: Vec<AdapterSupport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct AdapterSupport {
+    pub(crate) action: &'static str,
+    pub(crate) adapter: &'static str,
+    pub(crate) target_hint: &'static str,
+    pub(crate) status: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -112,13 +121,145 @@ impl TrustedExecutionAdapter for StubPasswordFillAdapter {
             adapter: "password_fill_stub",
             configured: true,
             ready: true,
+            supported_actions: vec![AdapterSupport {
+                action: "password_fill",
+                adapter: "password_fill_stub",
+                target_hint: "https://.../login",
+                status: "preview",
+            }],
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct StubRequestSignAdapter;
+
+impl StubRequestSignAdapter {
+    fn target_supported(target: &str) -> bool {
+        target.ends_with("/sign")
+    }
+}
+
+#[async_trait]
+impl TrustedExecutionAdapter for StubRequestSignAdapter {
+    async fn execute(
+        &self,
+        request: AdapterRequest<'_>,
+        resolved: ResolvedSecret,
+    ) -> Result<MaskedAdapterResult, AdapterError> {
+        if request.action != "request_sign" {
+            return Err(AdapterError {
+                code: AdapterErrorCode::UnsupportedAction,
+                message: "Unsupported execution adapter action",
+            });
+        }
+
+        if !Self::target_supported(request.target) {
+            return Err(AdapterError {
+                code: AdapterErrorCode::TargetMismatch,
+                message: "Execution adapter target mismatch",
+            });
+        }
+
+        if resolved.secret_bytes.is_empty() {
+            return Err(AdapterError {
+                code: AdapterErrorCode::Unavailable,
+                message: "Execution adapter is unavailable",
+            });
+        }
+
+        Ok(MaskedAdapterResult {
+            adapter: "request_sign_stub",
+            outcome: "signed",
+            target: request.target.to_string(),
+            secret_ref_masked: resolved.secret_ref_masked,
+        })
+    }
+
+    async fn health(&self) -> AdapterHealth {
+        AdapterHealth {
+            mode: "stub",
+            adapter: "request_sign_stub",
+            configured: true,
+            ready: true,
+            supported_actions: vec![AdapterSupport {
+                action: "request_sign",
+                adapter: "request_sign_stub",
+                target_hint: "https://.../sign",
+                status: "preview",
+            }],
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct StubCredentialHandoffAdapter;
+
+impl StubCredentialHandoffAdapter {
+    fn target_supported(target: &str) -> bool {
+        target.starts_with("handoff://local-helper/")
+    }
+}
+
+#[async_trait]
+impl TrustedExecutionAdapter for StubCredentialHandoffAdapter {
+    async fn execute(
+        &self,
+        request: AdapterRequest<'_>,
+        resolved: ResolvedSecret,
+    ) -> Result<MaskedAdapterResult, AdapterError> {
+        if request.action != "credential_handoff" {
+            return Err(AdapterError {
+                code: AdapterErrorCode::UnsupportedAction,
+                message: "Unsupported execution adapter action",
+            });
+        }
+
+        if !Self::target_supported(request.target) {
+            return Err(AdapterError {
+                code: AdapterErrorCode::TargetMismatch,
+                message: "Execution adapter target mismatch",
+            });
+        }
+
+        if resolved.secret_bytes.is_empty() {
+            return Err(AdapterError {
+                code: AdapterErrorCode::Unavailable,
+                message: "Execution adapter is unavailable",
+            });
+        }
+
+        Ok(MaskedAdapterResult {
+            adapter: "credential_handoff_stub",
+            outcome: "handed_off",
+            target: request.target.to_string(),
+            secret_ref_masked: resolved.secret_ref_masked,
+        })
+    }
+
+    async fn health(&self) -> AdapterHealth {
+        AdapterHealth {
+            mode: "stub",
+            adapter: "credential_handoff_stub",
+            configured: true,
+            ready: true,
+            supported_actions: vec![AdapterSupport {
+                action: "credential_handoff",
+                adapter: "credential_handoff_stub",
+                target_hint: "handoff://local-helper/...",
+                status: "preview",
+            }],
         }
     }
 }
 
 pub(crate) enum ExecutionAdapterRuntime {
     Off,
-    Stub(StubPasswordFillAdapter),
+    Stub {
+        password_fill: StubPasswordFillAdapter,
+        request_sign: StubRequestSignAdapter,
+        credential_handoff: StubCredentialHandoffAdapter,
+    },
 }
 
 impl ExecutionAdapterRuntime {
@@ -127,7 +268,11 @@ impl ExecutionAdapterRuntime {
     }
 
     pub(crate) fn stub() -> Self {
-        Self::Stub(StubPasswordFillAdapter)
+        Self::Stub {
+            password_fill: StubPasswordFillAdapter,
+            request_sign: StubRequestSignAdapter,
+            credential_handoff: StubCredentialHandoffAdapter,
+        }
     }
 }
 
@@ -143,7 +288,19 @@ impl TrustedExecutionAdapter for ExecutionAdapterRuntime {
                 code: AdapterErrorCode::Disabled,
                 message: "Execution adapter is disabled",
             }),
-            ExecutionAdapterRuntime::Stub(adapter) => adapter.execute(request, resolved).await,
+            ExecutionAdapterRuntime::Stub {
+                password_fill,
+                request_sign,
+                credential_handoff,
+            } => match request.action {
+                "password_fill" => password_fill.execute(request, resolved).await,
+                "request_sign" => request_sign.execute(request, resolved).await,
+                "credential_handoff" => credential_handoff.execute(request, resolved).await,
+                _ => Err(AdapterError {
+                    code: AdapterErrorCode::UnsupportedAction,
+                    message: "Unsupported execution adapter action",
+                }),
+            },
         }
     }
 
@@ -154,8 +311,34 @@ impl TrustedExecutionAdapter for ExecutionAdapterRuntime {
                 adapter: "none",
                 configured: false,
                 ready: false,
+                supported_actions: vec![],
             },
-            ExecutionAdapterRuntime::Stub(adapter) => adapter.health().await,
+            ExecutionAdapterRuntime::Stub { .. } => AdapterHealth {
+                mode: "stub",
+                adapter: "registry_stub",
+                configured: true,
+                ready: true,
+                supported_actions: vec![
+                    AdapterSupport {
+                        action: "password_fill",
+                        adapter: "password_fill_stub",
+                        target_hint: "https://.../login",
+                        status: "preview",
+                    },
+                    AdapterSupport {
+                        action: "request_sign",
+                        adapter: "request_sign_stub",
+                        target_hint: "https://.../sign",
+                        status: "preview",
+                    },
+                    AdapterSupport {
+                        action: "credential_handoff",
+                        adapter: "credential_handoff_stub",
+                        target_hint: "handoff://local-helper/...",
+                        status: "preview",
+                    },
+                ],
+            },
         }
     }
 }
@@ -225,6 +408,86 @@ mod tests {
                 AdapterRequest {
                     action: "password_fill",
                     target: "https://example.com/profile",
+                },
+                resolved_secret(),
+            )
+            .await
+            .expect_err("target mismatch");
+
+        assert_eq!(err.code, AdapterErrorCode::TargetMismatch);
+        assert!(!err.message.contains("stub-secret-material"));
+    }
+
+    #[tokio::test]
+    async fn stub_adapter_supports_request_sign_without_leaking_plaintext() {
+        let runtime = ExecutionAdapterRuntime::stub();
+
+        let result = runtime
+            .execute(
+                AdapterRequest {
+                    action: "request_sign",
+                    target: "https://api.example.com/sign",
+                },
+                resolved_secret(),
+            )
+            .await
+            .expect("masked signing result");
+
+        assert_eq!(result.adapter, "request_sign_stub");
+        assert_eq!(result.outcome, "signed");
+        assert_eq!(result.target, "https://api.example.com/sign");
+        assert_eq!(result.secret_ref_masked, "bw****in");
+    }
+
+    #[tokio::test]
+    async fn request_sign_adapter_rejects_unsupported_targets_without_plaintext() {
+        let runtime = ExecutionAdapterRuntime::stub();
+
+        let err = runtime
+            .execute(
+                AdapterRequest {
+                    action: "request_sign",
+                    target: "https://example.com/profile",
+                },
+                resolved_secret(),
+            )
+            .await
+            .expect_err("target mismatch");
+
+        assert_eq!(err.code, AdapterErrorCode::TargetMismatch);
+        assert!(!err.message.contains("stub-secret-material"));
+    }
+
+    #[tokio::test]
+    async fn stub_adapter_supports_credential_handoff_without_leaking_plaintext() {
+        let runtime = ExecutionAdapterRuntime::stub();
+
+        let result = runtime
+            .execute(
+                AdapterRequest {
+                    action: "credential_handoff",
+                    target: "handoff://local-helper/session",
+                },
+                resolved_secret(),
+            )
+            .await
+            .expect("masked handoff result");
+
+        assert_eq!(result.adapter, "credential_handoff_stub");
+        assert_eq!(result.outcome, "handed_off");
+        assert_eq!(result.target, "handoff://local-helper/session");
+        assert_eq!(result.secret_ref_masked, "bw****in");
+    }
+
+    #[tokio::test]
+    async fn credential_handoff_adapter_rejects_unsupported_targets_without_plaintext() {
+        let runtime = ExecutionAdapterRuntime::stub();
+
+        let err = runtime
+            .execute(
+                AdapterRequest {
+                    action: "credential_handoff",
+                    target: "handoff://other-host/session",
                 },
                 resolved_secret(),
             )

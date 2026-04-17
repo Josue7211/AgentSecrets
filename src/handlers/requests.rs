@@ -6,18 +6,23 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::policy::{
-    classify_secret_ref, contains_illegal_chars, is_valid_status_filter, requires_approval,
-    target_allowed, SecretRefValidation,
+    classify_secret_ref, contains_illegal_chars, evaluate_request_policy, is_valid_status_filter,
+    target_allowed, PolicyInput, PolicySummary, SecretRefValidation,
 };
 use crate::{
     audit::append_audit,
     auth::{enforce_rate_limit, require_approver, require_client_or_approver},
-    capability_token, err, mask_secret_ref, now_unix, ok, request_id, token_hash,
-    unix_to_sqlite_datetime, ApiError, ApiResponse, AppState, AuditQuery, AuditRow,
-    CreateRequestBody, DecisionBody, ListQuery, RequestRow, RequestView,
+    capability_token, err,
+    identity::{verify_headers, IdentityExpectations, IdentitySummary},
+    mask_secret_ref, now_unix, ok, request_id, token_hash, unix_to_sqlite_datetime, ApiError,
+    ApiResponse, AppState, ApproveLookupRow, AuditQuery, AuditRow, CreateRequestBody, DecisionBody,
+    ListQuery, RequestRow, RequestView,
 };
 
-use super::expire_stale_requests;
+use super::{
+    expire_stale_requests, expire_stale_trusted_input_sessions,
+    trusted_input::consume_opaque_ref_for_request,
+};
 
 struct CapabilityIssue {
     token: String,
@@ -32,6 +37,8 @@ fn build_approval_payload(
     action: &str,
     target: &str,
     reason: Option<&str>,
+    policy: &PolicySummary,
+    identity: Option<&IdentitySummary>,
 ) -> Value {
     json!({
         "request_type": request_type,
@@ -39,6 +46,8 @@ fn build_approval_payload(
         "action": action,
         "target": target,
         "reason": reason,
+        "policy": policy,
+        "identity": identity,
     })
 }
 
@@ -84,6 +93,15 @@ pub(crate) async fn create_request(
             "Failed to expire stale requests",
         )
     })?;
+    expire_stale_trusted_input_sessions(&state)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "db_error",
+                "Failed to expire trusted input sessions",
+            )
+        })?;
 
     let request_type = body.request_type.trim();
     let secret_ref = body.secret_ref.trim();
@@ -104,51 +122,6 @@ pub(crate) async fn create_request(
             "invalid_secret_ref",
             "Invalid secret_ref",
         ));
-    }
-    match classify_secret_ref(secret_ref) {
-        SecretRefValidation::Accepted => {}
-        SecretRefValidation::RejectedPlaintextLike => {
-            let _ = append_audit(
-                &state.db,
-                &auth_ctx.key_fingerprint,
-                "request.ingress_rejected",
-                None,
-                &json!({
-                    "reason": "raw_secret_rejected",
-                    "request_type": request_type,
-                    "action": action,
-                    "target": target,
-                }),
-            )
-            .await;
-
-            return Err(err(
-                StatusCode::BAD_REQUEST,
-                "raw_secret_rejected",
-                "Plaintext secret values are not accepted; use an opaque secret_ref",
-            ));
-        }
-        SecretRefValidation::RejectedMalformed => {
-            let _ = append_audit(
-                &state.db,
-                &auth_ctx.key_fingerprint,
-                "request.ingress_rejected",
-                None,
-                &json!({
-                    "reason": "invalid_secret_ref",
-                    "request_type": request_type,
-                    "action": action,
-                    "target": target,
-                }),
-            )
-            .await;
-
-            return Err(err(
-                StatusCode::BAD_REQUEST,
-                "invalid_secret_ref",
-                "Invalid secret_ref",
-            ));
-        }
     }
     if action.is_empty() || action.len() > 128 || contains_illegal_chars(action) {
         return Err(err(
@@ -182,8 +155,122 @@ pub(crate) async fn create_request(
         }
     }
 
+    let identity = match verify_headers(
+        &state.cfg,
+        &headers,
+        IdentityExpectations { action },
+        now_unix(),
+    ) {
+        Ok(identity) => identity,
+        Err(identity_err) => {
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.identity_rejected",
+                None,
+                &json!({
+                    "request_type": request_type,
+                    "action": action,
+                    "target": target,
+                    "reason": identity_err.code,
+                }),
+            )
+            .await;
+
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                identity_err.code,
+                identity_err.message,
+            ));
+        }
+    };
+
+    let trusted_input =
+        consume_opaque_ref_for_request(&state, request_type, secret_ref, action, target).await?;
+    let stored_secret_ref = if let Some(consumed) = trusted_input.as_ref() {
+        consumed.provider_secret_ref.clone()
+    } else {
+        match classify_secret_ref(secret_ref) {
+            SecretRefValidation::Accepted => secret_ref.to_string(),
+            SecretRefValidation::RejectedPlaintextLike => {
+                let _ = append_audit(
+                    &state.db,
+                    &auth_ctx.key_fingerprint,
+                    "request.ingress_rejected",
+                    None,
+                    &json!({
+                        "reason": "raw_secret_rejected",
+                        "request_type": request_type,
+                        "action": action,
+                        "target": target,
+                    }),
+                )
+                .await;
+
+                return Err(err(
+                    StatusCode::BAD_REQUEST,
+                    "raw_secret_rejected",
+                    "Plaintext secret values are not accepted; use an opaque secret_ref",
+                ));
+            }
+            SecretRefValidation::RejectedMalformed => {
+                let _ = append_audit(
+                    &state.db,
+                    &auth_ctx.key_fingerprint,
+                    "request.ingress_rejected",
+                    None,
+                    &json!({
+                        "reason": "invalid_secret_ref",
+                        "request_type": request_type,
+                        "action": action,
+                        "target": target,
+                    }),
+                )
+                .await;
+
+                return Err(err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_secret_ref",
+                    "Invalid secret_ref",
+                ));
+            }
+        }
+    };
+
+    let policy = evaluate_request_policy(
+        &state.cfg,
+        PolicyInput {
+            actor_role: auth_ctx.role,
+            action,
+            target,
+            amount_cents: body.amount_cents,
+        },
+    );
+
+    if policy.outcome == "deny" {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.policy_denied",
+            None,
+            &json!({
+                "request_type": request_type,
+                "action": action,
+                "target": target,
+                "policy": policy,
+            }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "policy_denied",
+            "Request denied by policy",
+        ));
+    }
+
     let id = request_id();
-    let needs_approval = requires_approval(action, body.amount_cents);
+    let needs_approval = policy.outcome != "allow";
 
     let mut capability_plaintext: Option<String> = None;
     let mut capability_expires_at: Option<String> = None;
@@ -192,6 +279,14 @@ pub(crate) async fn create_request(
     let mut capability_action: Option<String> = None;
     let mut capability_target: Option<String> = None;
     let mut capability_issued_at: Option<String> = None;
+    let identity_status = identity
+        .as_ref()
+        .map(|item| item.status.clone())
+        .unwrap_or_else(|| "disabled".to_string());
+    let identity_mode = identity
+        .as_ref()
+        .map(|item| item.mode.clone())
+        .unwrap_or_else(|| "off".to_string());
 
     let status = match state.cfg.mode {
         crate::BrokerMode::Off | crate::BrokerMode::Monitor => {
@@ -226,12 +321,15 @@ pub(crate) async fn create_request(
         "INSERT INTO secret_broker_requests (
             id, request_type, secret_ref, action, target, amount_cents, reason, status,
             requires_approval, capability_hash, capability_expires_at, capability_request_id,
-            capability_action, capability_target, capability_issued_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            capability_action, capability_target, capability_issued_at,
+            policy_outcome, policy_risk_score, policy_environment, policy_reasons,
+            identity_status, identity_mode, identity_runtime_id, identity_host_id,
+            identity_adapter_id, identity_verified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(request_type)
-    .bind(secret_ref)
+    .bind(&stored_secret_ref)
     .bind(action)
     .bind(target)
     .bind(body.amount_cents)
@@ -244,6 +342,16 @@ pub(crate) async fn create_request(
     .bind(capability_action)
     .bind(capability_target)
     .bind(capability_issued_at)
+    .bind(policy.outcome.clone())
+    .bind(policy.risk_score)
+    .bind(policy.environment.clone())
+    .bind(serde_json::to_string(&policy.reasons).unwrap_or_else(|_| "[]".to_string()))
+    .bind(identity_status)
+    .bind(identity_mode)
+    .bind(identity.as_ref().map(|item| item.runtime_id.clone()))
+    .bind(identity.as_ref().map(|item| item.host_id.clone()))
+    .bind(identity.as_ref().map(|item| item.adapter_id.clone()))
+    .bind(identity.as_ref().map(|item| item.verified_at.clone()))
     .execute(&*state.db)
     .await
     .map_err(|_| {
@@ -265,6 +373,9 @@ pub(crate) async fn create_request(
             "action": action,
             "target": target,
             "requires_approval": needs_approval,
+            "policy": policy,
+            "identity": identity,
+            "trusted_input_session_id": trusted_input.as_ref().map(|item| item.session_id.as_str()),
         }),
     )
     .await;
@@ -273,17 +384,60 @@ pub(crate) async fn create_request(
         "id": id,
         "status": status,
         "requires_approval": needs_approval,
-        "secret_ref_masked": mask_secret_ref(secret_ref),
+        "secret_ref_masked": mask_secret_ref(&stored_secret_ref),
         "capability_token": capability_plaintext,
         "capability_expires_at": capability_expires_at,
+        "policy": policy,
+        "identity": identity,
         "approval_payload": build_approval_payload(
             request_type,
-            secret_ref,
+            &stored_secret_ref,
             action,
             target,
             reason.as_deref(),
+            &policy,
+            identity.as_ref(),
         ),
     })))
+}
+
+fn parse_policy_summary(
+    outcome: String,
+    risk_score: i64,
+    environment: String,
+    reasons_json: String,
+) -> PolicySummary {
+    let reasons = serde_json::from_str::<Vec<String>>(&reasons_json).unwrap_or_default();
+    PolicySummary {
+        outcome,
+        risk_score,
+        environment,
+        reasons,
+    }
+}
+
+fn parse_identity_summary(
+    status: String,
+    mode: String,
+    runtime_id: Option<String>,
+    host_id: Option<String>,
+    adapter_id: Option<String>,
+    verified_at: Option<String>,
+) -> Option<IdentitySummary> {
+    let (Some(runtime_id), Some(host_id), Some(adapter_id), Some(verified_at)) =
+        (runtime_id, host_id, adapter_id, verified_at)
+    else {
+        return None;
+    };
+
+    Some(IdentitySummary {
+        status,
+        mode,
+        runtime_id,
+        host_id,
+        adapter_id,
+        verified_at,
+    })
 }
 
 pub(crate) async fn list_requests(
@@ -403,8 +557,11 @@ pub(crate) async fn approve_request(
         )
     })?;
 
-    let row: Option<(String, String, String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT status, request_type, secret_ref, action, reason, target
+    let row: Option<ApproveLookupRow> = sqlx::query_as(
+        "SELECT status, request_type, secret_ref, action, reason, target,
+                policy_outcome, policy_risk_score, policy_environment, policy_reasons,
+                identity_status, identity_mode, identity_runtime_id, identity_host_id,
+                identity_adapter_id, identity_verified_at
          FROM secret_broker_requests
          WHERE id = ?
          LIMIT 1",
@@ -420,7 +577,25 @@ pub(crate) async fn approve_request(
         )
     })?;
 
-    let Some((status, request_type, secret_ref, action, reason, target)) = row else {
+    let Some((
+        status,
+        request_type,
+        secret_ref,
+        action,
+        reason,
+        target,
+        policy_outcome,
+        policy_risk_score,
+        policy_environment,
+        policy_reasons,
+        identity_status,
+        identity_mode,
+        identity_runtime_id,
+        identity_host_id,
+        identity_adapter_id,
+        identity_verified_at,
+    )) = row
+    else {
         return Err(err(StatusCode::NOT_FOUND, "not_found", "Request not found"));
     };
 
@@ -431,6 +606,21 @@ pub(crate) async fn approve_request(
             "Request is not pending approval",
         ));
     }
+
+    let policy = parse_policy_summary(
+        policy_outcome,
+        policy_risk_score,
+        policy_environment,
+        policy_reasons,
+    );
+    let identity = parse_identity_summary(
+        identity_status,
+        identity_mode,
+        identity_runtime_id,
+        identity_host_id,
+        identity_adapter_id,
+        identity_verified_at,
+    );
 
     let issued = issue_capability(&state)?;
 
@@ -469,7 +659,11 @@ pub(crate) async fn approve_request(
         &auth_ctx.key_fingerprint,
         "request.approve",
         Some(&id),
-        &json!({"capability_expires_at": issued.expires_at}),
+        &json!({
+            "capability_expires_at": issued.expires_at,
+            "policy": policy,
+            "identity": identity,
+        }),
     )
     .await;
 
@@ -479,12 +673,15 @@ pub(crate) async fn approve_request(
         "capability_token": issued.token,
         "capability_expires_at": issued.expires_at,
         "note": "capability token is single-use",
+        "identity": identity,
         "approval_payload": build_approval_payload(
             &request_type,
             &secret_ref,
             &action,
             &target,
             reason.as_deref(),
+            &policy,
+            identity.as_ref(),
         ),
     })))
 }

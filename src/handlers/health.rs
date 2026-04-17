@@ -18,6 +18,7 @@ pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
         },
         "provider": provider,
         "adapter": adapter,
+        "identity": crate::identity::health(&state.cfg),
     }))
 }
 

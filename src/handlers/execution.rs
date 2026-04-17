@@ -9,13 +9,39 @@ use crate::{
     adapter::{AdapterErrorCode, AdapterRequest, TrustedExecutionAdapter},
     audit::append_audit,
     auth::{enforce_rate_limit, require_client_or_approver},
-    err, now_unix, ok,
+    err,
+    identity::{verify_headers, IdentityExpectations, IdentitySummary},
+    now_unix, ok,
     provider::SecretProvider,
     sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState, ExecuteBody,
     ExecuteLookupRow,
 };
 
 use super::expire_stale_requests;
+
+fn parse_identity_summary(
+    status: String,
+    mode: String,
+    runtime_id: Option<String>,
+    host_id: Option<String>,
+    adapter_id: Option<String>,
+    verified_at: Option<String>,
+) -> Option<IdentitySummary> {
+    let (Some(runtime_id), Some(host_id), Some(adapter_id), Some(verified_at)) =
+        (runtime_id, host_id, adapter_id, verified_at)
+    else {
+        return None;
+    };
+
+    Some(IdentitySummary {
+        status,
+        mode,
+        runtime_id,
+        host_id,
+        adapter_id,
+        verified_at,
+    })
+}
 
 pub(crate) async fn execute_request(
     State(state): State<AppState>,
@@ -43,7 +69,9 @@ pub(crate) async fn execute_request(
 
     let row: Option<ExecuteLookupRow> = sqlx::query_as(
         "SELECT status, action, target, secret_ref, capability_hash, capability_expires_at,
-                capability_request_id, capability_action, capability_target, capability_issued_at
+                capability_request_id, capability_action, capability_target, capability_issued_at,
+                identity_status, identity_mode, identity_runtime_id, identity_host_id,
+                identity_adapter_id, identity_verified_at
          FROM secret_broker_requests
          WHERE id = ?
          LIMIT 1",
@@ -70,6 +98,12 @@ pub(crate) async fn execute_request(
         capability_action,
         capability_target,
         capability_issued_at,
+        identity_status,
+        identity_mode,
+        identity_runtime_id,
+        identity_host_id,
+        identity_adapter_id,
+        identity_verified_at,
     )) = row
     else {
         return Err(err(StatusCode::NOT_FOUND, "not_found", "Request not found"));
@@ -97,6 +131,42 @@ pub(crate) async fn execute_request(
             "target is required",
         ));
     };
+
+    let current_identity = match verify_headers(
+        &state.cfg,
+        &headers,
+        IdentityExpectations {
+            action: expected_action,
+        },
+        now_unix(),
+    ) {
+        Ok(identity) => identity,
+        Err(identity_err) => {
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.identity_rejected",
+                Some(&body.id),
+                &json!({ "reason": identity_err.code }),
+            )
+            .await;
+
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                identity_err.code,
+                identity_err.message,
+            ));
+        }
+    };
+
+    let stored_identity = parse_identity_summary(
+        identity_status,
+        identity_mode,
+        identity_runtime_id,
+        identity_host_id,
+        identity_adapter_id,
+        identity_verified_at,
+    );
 
     let Some(stored_hash) = capability_hash else {
         return Err(err(
@@ -243,6 +313,30 @@ pub(crate) async fn execute_request(
             "target_mismatch",
             "Target mismatch",
         ));
+    }
+
+    if let (Some(stored_identity), Some(current_identity)) =
+        (stored_identity.as_ref(), current_identity.as_ref())
+    {
+        if stored_identity.runtime_id != current_identity.runtime_id
+            || stored_identity.host_id != current_identity.host_id
+            || stored_identity.adapter_id != current_identity.adapter_id
+        {
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.execute_rejected",
+                Some(&body.id),
+                &json!({ "reason": "identity_mismatch" }),
+            )
+            .await;
+
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "identity_mismatch",
+                "Verified identity mismatch",
+            ));
+        }
     }
 
     let Some(exp_unix) = sqlite_datetime_to_unix(expires) else {
@@ -448,6 +542,7 @@ pub(crate) async fn execute_request(
         },
         "provider": provider_result,
         "adapter": adapter_result,
+        "identity": current_identity,
         "note": "no plaintext secrets returned",
     });
 

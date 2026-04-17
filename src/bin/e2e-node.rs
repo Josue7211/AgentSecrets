@@ -4,18 +4,116 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RedactionMode {
+    Off,
+    Supported,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptRedactor {
+    mode: RedactionMode,
+    canary_secret: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let redactor = TranscriptRedactor::from_env()?;
     let mut args = std::env::args().skip(1);
     let command = args.next().context("missing e2e-node command")?;
     let flags = parse_flags(args.collect())?;
 
     match command.as_str() {
-        "create" => create_request(flags).await,
-        "approve" => approve_request(flags).await,
-        "execute" => execute_request(flags).await,
+        "create" => create_request(flags, &redactor).await,
+        "approve" => approve_request(flags, &redactor).await,
+        "execute" => execute_request(flags, &redactor).await,
+        "trusted-start" => trusted_input_start(flags, &redactor).await,
+        "trusted-complete" => trusted_input_complete(flags, &redactor).await,
         other => Err(anyhow!("unsupported e2e-node command: {other}")),
     }
+}
+
+impl TranscriptRedactor {
+    fn from_env() -> Result<Self> {
+        let mode = match std::env::var("SECRET_BROKER_E2E_REDACTION_MODE")
+            .unwrap_or_else(|_| "off".to_string())
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "supported" => RedactionMode::Supported,
+            _ => RedactionMode::Off,
+        };
+
+        if mode == RedactionMode::Supported
+            && std::env::var("SECRET_BROKER_E2E_REDACTION_FORCE_FAILURE")
+                .ok()
+                .as_deref()
+                == Some("1")
+        {
+            anyhow::bail!("supported-host redaction initialization failed");
+        }
+
+        Ok(Self {
+            mode,
+            canary_secret: std::env::var("SECRET_BROKER_E2E_CANARY_SECRET").ok(),
+        })
+    }
+
+    fn print(&self, line: &str) {
+        println!("{}", self.sanitize(line));
+    }
+
+    fn sanitize(&self, input: &str) -> String {
+        if self.mode == RedactionMode::Off {
+            return input.to_string();
+        }
+
+        let mut output = input.to_string();
+
+        if let Some(canary_secret) = self.canary_secret.as_deref() {
+            if !canary_secret.is_empty() {
+                output = output.replace(canary_secret, "[redacted:canary]");
+            }
+        }
+
+        output = replace_prefixed_segment(&output, "bw://", "[redacted:provider-ref]");
+        output = replace_prefixed_segment(&output, "tir://session/", "[redacted:opaque-ref]");
+        output = replace_prefixed_segment(&output, "sbt_", "[redacted:capability]");
+        output = replace_prefixed_segment(&output, "tit_", "[redacted:completion-token]");
+
+        output
+    }
+}
+
+fn replace_prefixed_segment(input: &str, prefix: &str, replacement: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut remaining = input;
+
+    while let Some(index) = remaining.find(prefix) {
+        let (before, after_prefix) = remaining.split_at(index);
+        output.push_str(before);
+
+        let token_len = after_prefix
+            .chars()
+            .take_while(|c| {
+                !c.is_whitespace() && *c != '"' && *c != ',' && *c != '}' && *c != ']' && *c != ')'
+            })
+            .map(char::len_utf8)
+            .sum::<usize>();
+
+        if token_len == 0 {
+            output.push_str(prefix);
+            remaining = &after_prefix[prefix.len()..];
+            continue;
+        }
+
+        output.push_str(replacement);
+        remaining = &after_prefix[token_len..];
+    }
+
+    output.push_str(remaining);
+    output
 }
 
 fn parse_flags(args: Vec<String>) -> Result<HashMap<String, String>> {
@@ -45,7 +143,10 @@ fn required_flag(flags: &HashMap<String, String>, name: &str) -> Result<String> 
         .ok_or_else(|| anyhow!("missing required flag --{name}"))
 }
 
-async fn create_request(flags: HashMap<String, String>) -> Result<()> {
+async fn create_request(
+    flags: HashMap<String, String>,
+    redactor: &TranscriptRedactor,
+) -> Result<()> {
     let broker_url = required_flag(&flags, "broker-url")?;
     let api_key = required_flag(&flags, "api-key")?;
     let secret_ref = required_flag(&flags, "secret-ref")?;
@@ -57,9 +158,9 @@ async fn create_request(flags: HashMap<String, String>) -> Result<()> {
         .cloned()
         .unwrap_or_else(|| action.clone());
 
-    println!(
+    redactor.print(&format!(
         "transcript:create request_type={request_type} action={action} target={target} secret_ref={secret_ref}"
-    );
+    ));
 
     let body = json!({
         "request_type": request_type,
@@ -82,25 +183,36 @@ async fn create_request(flags: HashMap<String, String>) -> Result<()> {
         .await
         .context("create request body decode failed")?;
 
-    println!("transcript:create status={status}");
-    println!("transcript:create body={json_body}");
+    redactor.print(&format!("transcript:create status={status}"));
+    redactor.print(&format!("transcript:create body={json_body}"));
     println!(
         "RESULT_JSON={}",
         json!({
             "status": status,
-            "body": json_body,
+            "body": {
+                "ok": json_body["ok"],
+                "data": {
+                    "id": json_body["data"]["id"],
+                    "status": json_body["data"]["status"],
+                    "requires_approval": json_body["data"]["requires_approval"],
+                    "secret_ref_masked": json_body["data"]["secret_ref_masked"]
+                }
+            },
             "id": json_body["data"]["id"]
         })
     );
     Ok(())
 }
 
-async fn approve_request(flags: HashMap<String, String>) -> Result<()> {
+async fn approve_request(
+    flags: HashMap<String, String>,
+    redactor: &TranscriptRedactor,
+) -> Result<()> {
     let broker_url = required_flag(&flags, "broker-url")?;
     let api_key = required_flag(&flags, "api-key")?;
     let id = required_flag(&flags, "id")?;
 
-    println!("transcript:approve id={id}");
+    redactor.print(&format!("transcript:approve id={id}"));
 
     let response = Client::new()
         .post(format!("{broker_url}/v1/requests/{id}/approve"))
@@ -114,8 +226,8 @@ async fn approve_request(flags: HashMap<String, String>) -> Result<()> {
         .await
         .context("approve request body decode failed")?;
 
-    println!("transcript:approve status={status}");
-    println!("transcript:approve body={json_body}");
+    redactor.print(&format!("transcript:approve status={status}"));
+    redactor.print(&format!("transcript:approve body={json_body}"));
     println!(
         "RESULT_JSON={}",
         json!({
@@ -127,7 +239,10 @@ async fn approve_request(flags: HashMap<String, String>) -> Result<()> {
     Ok(())
 }
 
-async fn execute_request(flags: HashMap<String, String>) -> Result<()> {
+async fn execute_request(
+    flags: HashMap<String, String>,
+    redactor: &TranscriptRedactor,
+) -> Result<()> {
     let broker_url = required_flag(&flags, "broker-url")?;
     let api_key = required_flag(&flags, "api-key")?;
     let id = required_flag(&flags, "id")?;
@@ -135,7 +250,9 @@ async fn execute_request(flags: HashMap<String, String>) -> Result<()> {
     let action = required_flag(&flags, "action")?;
     let target = required_flag(&flags, "target")?;
 
-    println!("transcript:execute id={id} action={action} target={target}");
+    redactor.print(&format!(
+        "transcript:execute id={id} action={action} target={target}"
+    ));
 
     let response = Client::new()
         .post(format!("{broker_url}/v1/execute"))
@@ -155,13 +272,124 @@ async fn execute_request(flags: HashMap<String, String>) -> Result<()> {
         .await
         .context("execute request body decode failed")?;
 
-    println!("transcript:execute status={status}");
-    println!("transcript:execute body={json_body}");
+    redactor.print(&format!("transcript:execute status={status}"));
+    redactor.print(&format!("transcript:execute body={json_body}"));
     println!(
         "RESULT_JSON={}",
         json!({
             "status": status,
             "body": json_body
+        })
+    );
+    Ok(())
+}
+
+async fn trusted_input_start(
+    flags: HashMap<String, String>,
+    redactor: &TranscriptRedactor,
+) -> Result<()> {
+    let broker_url = required_flag(&flags, "broker-url")?;
+    let api_key = required_flag(&flags, "api-key")?;
+    let action = required_flag(&flags, "action")?;
+    let target = required_flag(&flags, "target")?;
+    let reason = required_flag(&flags, "reason")?;
+    let request_type = flags
+        .get("request-type")
+        .cloned()
+        .unwrap_or_else(|| action.clone());
+
+    redactor.print(&format!(
+        "transcript:trusted-start request_type={request_type} action={action} target={target}"
+    ));
+
+    let response = Client::new()
+        .post(format!("{broker_url}/v1/trusted-input/sessions"))
+        .header("x-api-key", api_key)
+        .json(&json!({
+            "request_type": request_type,
+            "action": action,
+            "target": target,
+            "reason": reason
+        }))
+        .send()
+        .await
+        .context("trusted input start send failed")?;
+    let status = response.status().as_u16();
+    let json_body: Value = response
+        .json()
+        .await
+        .context("trusted input start body decode failed")?;
+
+    redactor.print(&format!("transcript:trusted-start status={status}"));
+    redactor.print(&format!("transcript:trusted-start body={json_body}"));
+    println!(
+        "RESULT_JSON={}",
+        json!({
+            "status": status,
+            "body": {
+                "ok": json_body["ok"],
+                "data": {
+                    "id": json_body["data"]["id"],
+                    "status": json_body["data"]["status"],
+                    "request_type": json_body["data"]["request_type"],
+                    "action": json_body["data"]["action"],
+                    "target": json_body["data"]["target"]
+                }
+            },
+            "id": json_body["data"]["id"],
+            "completion_token": json_body["data"]["completion_token"]
+        })
+    );
+    Ok(())
+}
+
+async fn trusted_input_complete(
+    flags: HashMap<String, String>,
+    redactor: &TranscriptRedactor,
+) -> Result<()> {
+    let broker_url = required_flag(&flags, "broker-url")?;
+    let api_key = required_flag(&flags, "api-key")?;
+    let id = required_flag(&flags, "id")?;
+    let completion_token = required_flag(&flags, "completion-token")?;
+    let secret_ref = required_flag(&flags, "secret-ref")?;
+
+    redactor.print(&format!(
+        "transcript:trusted-complete id={id} secret_ref={secret_ref}"
+    ));
+
+    let response = Client::new()
+        .post(format!(
+            "{broker_url}/v1/trusted-input/sessions/{id}/complete"
+        ))
+        .header("x-api-key", api_key)
+        .json(&json!({
+            "completion_token": completion_token,
+            "secret_ref": secret_ref
+        }))
+        .send()
+        .await
+        .context("trusted input complete send failed")?;
+    let status = response.status().as_u16();
+    let json_body: Value = response
+        .json()
+        .await
+        .context("trusted input complete body decode failed")?;
+
+    redactor.print(&format!("transcript:trusted-complete status={status}"));
+    redactor.print(&format!("transcript:trusted-complete body={json_body}"));
+    println!(
+        "RESULT_JSON={}",
+        json!({
+            "status": status,
+            "body": {
+                "ok": json_body["ok"],
+                "data": {
+                    "id": json_body["data"]["id"],
+                    "status": json_body["data"]["status"],
+                    "opaque_ref": json_body["data"]["opaque_ref"]
+                }
+            },
+            "opaque_ref": json_body["data"]["opaque_ref"]
         })
     );
     Ok(())

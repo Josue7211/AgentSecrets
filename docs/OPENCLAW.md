@@ -1,6 +1,7 @@
 # OpenClaw Integration
 
 This doc describes the intended broker contract for OpenClaw-like host apps. It does not certify current end-to-end transcript safety.
+Current V3 status for OpenClaw-style HTTP hosts is `preview` in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
 
 ## What OpenClaw should do
 
@@ -9,6 +10,7 @@ This doc describes the intended broker contract for OpenClaw-like host apps. It 
 - Never embed provider credentials in OpenClaw.
 - Never send raw secret values to the broker.
 - Use opaque refs such as `bw://...` only.
+- If OpenClaw wants transcript-safer ingress, it should use the trusted-input session flow and return only the broker `tir://session/<id>` opaque ref to the agent-visible runtime.
 - If the broker returns `raw_secret_rejected`, the host flow is violating the trusted-boundary contract.
 - Stay on the untrusted side of the trust boundary.
 
@@ -30,7 +32,7 @@ This doc describes the intended broker contract for OpenClaw-like host apps. It 
 - It does not claim transcript-safe host behavior.
 - It does not claim secure password entry through chat surfaces.
 - It does not claim a finished trusted-side browser-fill adapter.
-- It does not treat the local Loop 5 node-to-node harness as OpenClaw host certification.
+- It does not treat the local node-to-node harness as OpenClaw host certification.
 
 ## Drop-in contract
 

@@ -1,7 +1,8 @@
 mod adapter;
-mod audit;
+pub mod audit;
 mod auth;
 mod handlers;
+mod identity;
 mod keys;
 mod policy;
 mod provider;
@@ -53,6 +54,11 @@ struct Config {
     max_amount_cents: i64,
     allowed_target_prefixes: Vec<String>,
     rate_limit_per_minute: usize,
+    identity_verification_mode: identity::IdentityVerificationMode,
+    identity_attestation_key: String,
+    identity_attestation_max_age_seconds: i64,
+    trusted_runtime_ids: Vec<String>,
+    trusted_host_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +94,20 @@ struct CreateRequestBody {
     target: String,
     amount_cents: Option<i64>,
     reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTrustedInputSessionBody {
+    request_type: String,
+    action: String,
+    target: String,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompleteTrustedInputSessionBody {
+    completion_token: String,
+    secret_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +175,31 @@ type ExecuteLookupRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+type ApproveLookupRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 type AuditRow = (
@@ -198,8 +243,16 @@ fn request_id() -> String {
     format!("sbr_{}", random_hex(12))
 }
 
+fn trusted_input_session_id() -> String {
+    format!("tis_{}", random_hex(12))
+}
+
 fn capability_token() -> String {
     format!("sbt_{}", random_hex(24))
+}
+
+fn trusted_input_completion_token() -> String {
+    format!("tit_{}", random_hex(24))
 }
 
 fn token_hash(token: &str) -> String {
@@ -224,6 +277,10 @@ fn mask_secret_ref(secret_ref: &str) -> String {
         &secret_ref[..2],
         &secret_ref[secret_ref.len() - 2..]
     )
+}
+
+fn trusted_input_opaque_ref(session_id: &str) -> String {
+    format!("tir://session/{session_id}")
 }
 
 fn now_unix() -> i64 {
@@ -291,6 +348,23 @@ fn config_from_env() -> Config {
         .unwrap_or(120)
         .clamp(10, 10_000);
 
+    let identity_verification_mode = identity::parse_identity_verification_mode(
+        &std::env::var("SECRET_BROKER_IDENTITY_VERIFICATION_MODE")
+            .unwrap_or_else(|_| "off".to_string()),
+    );
+    let identity_attestation_key =
+        std::env::var("SECRET_BROKER_IDENTITY_ATTESTATION_KEY").unwrap_or_default();
+    let identity_attestation_max_age_seconds =
+        std::env::var("SECRET_BROKER_IDENTITY_ATTESTATION_MAX_AGE_SECONDS")
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(300)
+            .clamp(30, 3_600);
+    let trusted_runtime_ids =
+        policy::parse_list(&std::env::var("SECRET_BROKER_TRUSTED_RUNTIME_IDS").unwrap_or_default());
+    let trusted_host_ids =
+        policy::parse_list(&std::env::var("SECRET_BROKER_TRUSTED_HOST_IDS").unwrap_or_default());
+
     Config {
         bind,
         db_url,
@@ -304,6 +378,11 @@ fn config_from_env() -> Config {
         max_amount_cents,
         allowed_target_prefixes,
         rate_limit_per_minute,
+        identity_verification_mode,
+        identity_attestation_key,
+        identity_attestation_max_age_seconds,
+        trusted_runtime_ids,
+        trusted_host_ids,
     }
 }
 
@@ -330,6 +409,18 @@ fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
         .route("/readyz", get(handlers::health::readyz))
+        .route(
+            "/v1/trusted-input/sessions",
+            post(handlers::trusted_input::create_session),
+        )
+        .route(
+            "/v1/trusted-input/sessions/:id",
+            get(handlers::trusted_input::get_session),
+        )
+        .route(
+            "/v1/trusted-input/sessions/:id/complete",
+            post(handlers::trusted_input::complete_session),
+        )
         .route(
             "/v1/requests",
             post(handlers::requests::create_request).get(handlers::requests::list_requests),
@@ -452,8 +543,16 @@ mod tests {
             capability_ttl_seconds: 60,
             request_ttl_seconds: 3600,
             max_amount_cents: 2_000_000,
-            allowed_target_prefixes: vec!["https://".to_string()],
+            allowed_target_prefixes: vec![
+                "https://".to_string(),
+                "handoff://local-helper/".to_string(),
+            ],
             rate_limit_per_minute: 1000,
+            identity_verification_mode: crate::identity::IdentityVerificationMode::Off,
+            identity_attestation_key: String::new(),
+            identity_attestation_max_age_seconds: 300,
+            trusted_runtime_ids: Vec::new(),
+            trusted_host_ids: Vec::new(),
         })
     }
 
@@ -507,6 +606,51 @@ mod tests {
         setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Off).await
     }
 
+    async fn setup_app_with_identity_mode(
+        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+        adapter_mode: &str,
+        identity_mode: crate::identity::IdentityVerificationMode,
+    ) -> anyhow::Result<(Router, Arc<Config>)> {
+        let (app, cfg) = setup_app_with_modes(provider_bridge_mode, adapter_mode).await?;
+        let cfg = Arc::new(Config {
+            identity_verification_mode: identity_mode,
+            identity_attestation_key: "loop4-attestation-key".to_string(),
+            identity_attestation_max_age_seconds: 300,
+            trusted_runtime_ids: vec![
+                "local-helper-runtime".to_string(),
+                "secondary-helper-runtime".to_string(),
+            ],
+            trusted_host_ids: vec![
+                "local-helper-host".to_string(),
+                "secondary-helper-host".to_string(),
+            ],
+            ..(*cfg).clone()
+        });
+        let pool = connect_sqlite(&cfg.db_url).await?;
+        let state = AppState {
+            db: Arc::new(pool),
+            cfg: Arc::clone(&cfg),
+            provider: Arc::new(match cfg.provider_bridge_mode {
+                crate::provider::ProviderBridgeMode::Off => crate::provider::ProviderRuntime::off(),
+                crate::provider::ProviderBridgeMode::Stub => {
+                    crate::provider::ProviderRuntime::stub()
+                }
+            }),
+            adapter: Arc::new(match cfg.execution_adapter_mode {
+                crate::adapter::ExecutionAdapterMode::Off => {
+                    crate::adapter::ExecutionAdapterRuntime::off()
+                }
+                crate::adapter::ExecutionAdapterMode::Stub => {
+                    crate::adapter::ExecutionAdapterRuntime::stub()
+                }
+            }),
+            rate_state: Arc::new(Mutex::new(HashMap::new())),
+        };
+
+        let _ = app;
+        Ok((build_router(state), cfg))
+    }
+
     async fn json_response(resp: axum::response::Response) -> Value {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
@@ -538,6 +682,123 @@ mod tests {
         json["data"]["id"].as_str().expect("id").to_string()
     }
 
+    fn signed_identity_headers(
+        cfg: &Config,
+        action: &str,
+        runtime_id: &str,
+        host_id: &str,
+    ) -> Vec<(&'static str, String)> {
+        let timestamp = now_unix();
+        let adapter_id = crate::identity::adapter_id_for_action(action).to_string();
+        let signature = crate::identity::sign_identity_claim(
+            &cfg.identity_attestation_key,
+            runtime_id,
+            host_id,
+            &adapter_id,
+            timestamp,
+        );
+
+        vec![
+            ("x-secret-broker-runtime-id", runtime_id.to_string()),
+            ("x-secret-broker-host-id", host_id.to_string()),
+            ("x-secret-broker-adapter-id", adapter_id),
+            ("x-secret-broker-attestation-ts", timestamp.to_string()),
+            ("x-secret-broker-attestation-sig", signature),
+        ]
+    }
+
+    async fn create_request_for_action(
+        app: &Router,
+        cfg: &Config,
+        request_type: &str,
+        secret_ref: &str,
+        action: &str,
+        target: &str,
+        reason: &str,
+    ) -> anyhow::Result<String> {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": request_type,
+                    "secret_ref": secret_ref,
+                    "action": action,
+                    "target": target,
+                    "reason": reason
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = json_response(resp).await;
+        Ok(json["data"]["id"].as_str().expect("id").to_string())
+    }
+
+    async fn start_trusted_input_session(app: &Router, cfg: &Config) -> Value {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/trusted-input/sessions")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "trusted host input"
+                })
+                .to_string(),
+            ))
+            .expect("request");
+
+        let resp = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        json_response(resp).await
+    }
+
+    async fn get_trusted_input_session(
+        app: &Router,
+        cfg: &Config,
+        id: &str,
+    ) -> axum::response::Response {
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/v1/trusted-input/sessions/{id}"))
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::empty())
+            .expect("request");
+
+        app.clone().oneshot(req).await.expect("response")
+    }
+
+    async fn complete_trusted_input_session(
+        app: &Router,
+        cfg: &Config,
+        id: &str,
+        completion_token: &str,
+        secret_ref: &str,
+    ) -> axum::response::Response {
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/trusted-input/sessions/{id}/complete"))
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "completion_token": completion_token,
+                    "secret_ref": secret_ref
+                })
+                .to_string(),
+            ))
+            .expect("request");
+
+        app.clone().oneshot(req).await.expect("response")
+    }
+
     #[derive(Debug)]
     struct NodeInvocation {
         stdout: String,
@@ -557,6 +818,30 @@ mod tests {
         approver_stderr: String,
         execute_stdout: String,
         execute_stderr: String,
+        create_result: Value,
+        approve_result: Value,
+        execute_result: Value,
+    }
+
+    #[derive(Debug)]
+    struct TrustedInputNodeToNodeOutcome {
+        artifact_dir: PathBuf,
+        fixture_secret: String,
+        opaque_ref: String,
+        request_id: String,
+        capability_token: String,
+        trusted_start_stdout: String,
+        trusted_start_stderr: String,
+        trusted_complete_stdout: String,
+        trusted_complete_stderr: String,
+        create_stdout: String,
+        create_stderr: String,
+        approver_stdout: String,
+        approver_stderr: String,
+        execute_stdout: String,
+        execute_stderr: String,
+        trusted_start_result: Value,
+        trusted_complete_result: Value,
         create_result: Value,
         approve_result: Value,
         execute_result: Value,
@@ -688,7 +973,7 @@ mod tests {
             )
             .env(
                 "SECRET_BROKER_ALLOWED_TARGET_PREFIXES",
-                "https://example.com",
+                "https://example.com,handoff://local-helper/",
             )
             .env("SECRET_BROKER_PROVIDER_BRIDGE_MODE", "stub")
             .env("SECRET_BROKER_EXECUTION_ADAPTER_MODE", "stub")
@@ -710,11 +995,22 @@ mod tests {
     }
 
     async fn run_e2e_node(args: &[String]) -> anyhow::Result<NodeInvocation> {
+        run_e2e_node_with_env(args, &[]).await
+    }
+
+    async fn run_e2e_node_with_env(
+        args: &[String],
+        envs: &[(&str, &str)],
+    ) -> anyhow::Result<NodeInvocation> {
         ensure_e2e_binaries_built()?;
 
-        let output = Command::new(e2e_binary_path("e2e-node"))
-            .current_dir(repo_root())
-            .args(args)
+        let mut command = Command::new(e2e_binary_path("e2e-node"));
+        command.current_dir(repo_root()).args(args);
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+
+        let output = command
             .output()
             .await
             .context("failed to run e2e-node helper")?;
@@ -727,6 +1023,45 @@ mod tests {
         }
 
         let result = parse_result_line(&stdout)?;
+        Ok(NodeInvocation {
+            stdout,
+            stderr,
+            result,
+        })
+    }
+
+    async fn run_e2e_node_expect_failure(
+        args: &[String],
+        envs: &[(&str, &str)],
+    ) -> anyhow::Result<NodeInvocation> {
+        ensure_e2e_binaries_built()?;
+
+        let mut command = Command::new(e2e_binary_path("e2e-node"));
+        command.current_dir(repo_root()).args(args);
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+
+        let output = command
+            .output()
+            .await
+            .context("failed to run e2e-node helper")?;
+
+        let stdout = String::from_utf8(output.stdout).context("stdout must be utf-8")?;
+        let stderr = String::from_utf8(output.stderr).context("stderr must be utf-8")?;
+
+        if output.status.success() {
+            anyhow::bail!("expected e2e-node failure\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        }
+
+        let result = stdout
+            .lines()
+            .find(|line| line.starts_with("RESULT_JSON="))
+            .map(|line| line.trim_start_matches("RESULT_JSON="))
+            .map(serde_json::from_str)
+            .transpose()?
+            .unwrap_or_else(|| json!({}));
+
         Ok(NodeInvocation {
             stdout,
             stderr,
@@ -883,6 +1218,362 @@ mod tests {
         .await
     }
 
+    async fn run_trusted_input_node_to_node_happy_path(
+    ) -> anyhow::Result<TrustedInputNodeToNodeOutcome> {
+        let artifact_dir = new_artifact_dir("trusted-input-node-to-node-happy-path")?;
+        let fixture_secret = "stub-secret-material".to_string();
+
+        let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
+
+        let trusted_start = run_e2e_node(&[
+            "trusted-start".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--request-type".to_string(),
+            "password_fill".to_string(),
+            "--action".to_string(),
+            "password_fill".to_string(),
+            "--target".to_string(),
+            "https://example.com/login".to_string(),
+            "--reason".to_string(),
+            "trusted input happy path".to_string(),
+        ])
+        .await?;
+        let session_id = trusted_start.result["id"]
+            .as_str()
+            .context("trusted start result missing session id")?
+            .to_string();
+        let completion_token = trusted_start.result["completion_token"]
+            .as_str()
+            .context("trusted start result missing completion token")?
+            .to_string();
+
+        let trusted_complete = run_e2e_node(&[
+            "trusted-complete".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--id".to_string(),
+            session_id,
+            "--completion-token".to_string(),
+            completion_token,
+            "--secret-ref".to_string(),
+            "bw://vault/item/login".to_string(),
+        ])
+        .await?;
+        let opaque_ref = trusted_complete.result["opaque_ref"]
+            .as_str()
+            .context("trusted complete result missing opaque ref")?
+            .to_string();
+
+        let create = run_e2e_node(&[
+            "create".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--request-type".to_string(),
+            "password_fill".to_string(),
+            "--secret-ref".to_string(),
+            opaque_ref.clone(),
+            "--action".to_string(),
+            "password_fill".to_string(),
+            "--target".to_string(),
+            "https://example.com/login".to_string(),
+            "--reason".to_string(),
+            "trusted input happy path".to_string(),
+        ])
+        .await?;
+        let request_id = create.result["id"]
+            .as_str()
+            .context("create result missing request id")?
+            .to_string();
+
+        let approve = run_e2e_node(&[
+            "approve".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-approver-key-1234567890".to_string(),
+            "--id".to_string(),
+            request_id.clone(),
+        ])
+        .await?;
+        let capability_token = approve.result["capability_token"]
+            .as_str()
+            .context("approve result missing capability token")?
+            .to_string();
+
+        let execute = run_e2e_node(&[
+            "execute".to_string(),
+            "--broker-url".to_string(),
+            broker_url,
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--id".to_string(),
+            request_id.clone(),
+            "--capability-token".to_string(),
+            capability_token.clone(),
+            "--action".to_string(),
+            "password_fill".to_string(),
+            "--target".to_string(),
+            "https://example.com/login".to_string(),
+        ])
+        .await?;
+
+        let trusted_start_result = trusted_start.result.clone();
+        let trusted_complete_result = trusted_complete.result.clone();
+        let create_result = create.result.clone();
+        let approve_result = approve.result.clone();
+        let execute_result = execute.result.clone();
+
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-start.stdout.log"),
+            &trusted_start.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-start.stderr.log"),
+            &trusted_start.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-complete.stdout.log"),
+            &trusted_complete.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-complete.stderr.log"),
+            &trusted_complete.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("client.stdout.log"),
+            &create.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("client.stderr.log"),
+            &create.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stdout.log"),
+            &approve.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stderr.log"),
+            &approve.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stdout.log"),
+            &execute.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stderr.log"),
+            &execute.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("summary.json"),
+            &json!({
+                "opaque_ref": opaque_ref,
+                "request_id": request_id,
+                "capability_token": capability_token,
+                "trusted_start": trusted_start_result,
+                "trusted_complete": trusted_complete_result,
+                "create": create_result,
+                "approve": approve_result,
+                "execute": execute_result
+            })
+            .to_string(),
+            &[&fixture_secret, &capability_token],
+        )?;
+
+        stop_broker(broker_child).await?;
+
+        Ok(TrustedInputNodeToNodeOutcome {
+            artifact_dir,
+            fixture_secret,
+            opaque_ref,
+            request_id,
+            capability_token,
+            trusted_start_stdout: trusted_start.stdout,
+            trusted_start_stderr: trusted_start.stderr,
+            trusted_complete_stdout: trusted_complete.stdout,
+            trusted_complete_stderr: trusted_complete.stderr,
+            create_stdout: create.stdout,
+            create_stderr: create.stderr,
+            approver_stdout: approve.stdout,
+            approver_stderr: approve.stderr,
+            execute_stdout: execute.stdout,
+            execute_stderr: execute.stderr,
+            trusted_start_result,
+            trusted_complete_result,
+            create_result,
+            approve_result,
+            execute_result,
+        })
+    }
+
+    async fn run_adapter_node_to_node_scenario(
+        label: &str,
+        request_type: &str,
+        action: &str,
+        target: &str,
+    ) -> anyhow::Result<NodeToNodeOutcome> {
+        let artifact_dir = new_artifact_dir(label)?;
+        let fixture_secret = "stub-secret-material".to_string();
+
+        let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
+
+        let create = run_e2e_node(&[
+            "create".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--request-type".to_string(),
+            request_type.to_string(),
+            "--secret-ref".to_string(),
+            "bw://vault/item/login".to_string(),
+            "--action".to_string(),
+            action.to_string(),
+            "--target".to_string(),
+            target.to_string(),
+            "--reason".to_string(),
+            format!("{label} happy path"),
+        ])
+        .await?;
+        let request_id = create.result["id"]
+            .as_str()
+            .context("create result missing request id")?
+            .to_string();
+
+        let approve = run_e2e_node(&[
+            "approve".to_string(),
+            "--broker-url".to_string(),
+            broker_url.clone(),
+            "--api-key".to_string(),
+            "loop5-approver-key-1234567890".to_string(),
+            "--id".to_string(),
+            request_id.clone(),
+        ])
+        .await?;
+        let capability_token = approve.result["capability_token"]
+            .as_str()
+            .context("approve result missing capability token")?
+            .to_string();
+
+        let execute = run_e2e_node(&[
+            "execute".to_string(),
+            "--broker-url".to_string(),
+            broker_url,
+            "--api-key".to_string(),
+            "loop5-client-key-1234567890".to_string(),
+            "--id".to_string(),
+            request_id.clone(),
+            "--capability-token".to_string(),
+            capability_token.clone(),
+            "--action".to_string(),
+            action.to_string(),
+            "--target".to_string(),
+            target.to_string(),
+        ])
+        .await?;
+
+        let create_result = create.result.clone();
+        let approve_result = approve.result.clone();
+        let execute_result = execute.result.clone();
+
+        write_redacted_artifact(
+            &artifact_dir.join("client.stdout.log"),
+            &create.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("client.stderr.log"),
+            &create.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stdout.log"),
+            &approve.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stderr.log"),
+            &approve.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stdout.log"),
+            &execute.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stderr.log"),
+            &execute.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("summary.json"),
+            &json!({
+                "request_id": request_id,
+                "capability_token": capability_token,
+                "create": create_result,
+                "approve": approve_result,
+                "execute": execute_result
+            })
+            .to_string(),
+            &[&fixture_secret, &capability_token],
+        )?;
+
+        stop_broker(broker_child).await?;
+
+        Ok(NodeToNodeOutcome {
+            artifact_dir,
+            fixture_secret,
+            request_id,
+            capability_token,
+            client_stdout: create.stdout,
+            client_stderr: create.stderr,
+            approver_stdout: approve.stdout,
+            approver_stderr: approve.stderr,
+            execute_stdout: execute.stdout,
+            execute_stderr: execute.stderr,
+            create_result,
+            approve_result,
+            execute_result,
+        })
+    }
+
+    async fn run_request_sign_node_to_node_happy_path() -> anyhow::Result<NodeToNodeOutcome> {
+        run_adapter_node_to_node_scenario(
+            "node-to-node-request-sign",
+            "request_sign",
+            "request_sign",
+            "https://example.com/sign",
+        )
+        .await
+    }
+
+    async fn run_handoff_node_to_node_happy_path() -> anyhow::Result<NodeToNodeOutcome> {
+        run_adapter_node_to_node_scenario(
+            "node-to-node-credential-handoff",
+            "credential_handoff",
+            "credential_handoff",
+            "handoff://local-helper/session",
+        )
+        .await
+    }
+
     async fn update_request_action_target(
         cfg: &Config,
         id: &str,
@@ -932,7 +1623,19 @@ mod tests {
         assert_eq!(body["provider"]["mode"], "stub");
         assert_eq!(body["provider"]["provider"], "bitwarden_stub");
         assert_eq!(body["adapter"]["mode"], "stub");
-        assert_eq!(body["adapter"]["adapter"], "password_fill_stub");
+        assert_eq!(body["adapter"]["adapter"], "registry_stub");
+        assert_eq!(
+            body["adapter"]["supported_actions"][0]["action"],
+            "password_fill"
+        );
+        assert_eq!(
+            body["adapter"]["supported_actions"][1]["action"],
+            "request_sign"
+        );
+        assert_eq!(
+            body["adapter"]["supported_actions"][2]["action"],
+            "credential_handoff"
+        );
         Ok(())
     }
 
@@ -1012,6 +1715,119 @@ mod tests {
             .body(Body::from(exec_body.to_string()))?;
         let replay_resp = app.clone().oneshot(replay_req).await?;
         assert_eq!(replay_resp.status(), StatusCode::BAD_REQUEST);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn trusted_input_session_lifecycle_returns_broker_opaque_ref_only() -> anyhow::Result<()>
+    {
+        let (app, cfg) = setup_app().await?;
+
+        let session_json = start_trusted_input_session(&app, &cfg).await;
+        let session_id = session_json["data"]["id"]
+            .as_str()
+            .expect("trusted input session id");
+        let completion_token = session_json["data"]["completion_token"]
+            .as_str()
+            .expect("trusted input completion token");
+        assert_eq!(session_json["data"]["status"], "pending_input");
+
+        let pending_resp = get_trusted_input_session(&app, &cfg, session_id).await;
+        assert_eq!(pending_resp.status(), StatusCode::OK);
+        let pending_json = json_response(pending_resp).await;
+        assert_eq!(pending_json["data"]["status"], "pending_input");
+        assert!(pending_json["data"]["opaque_ref"].is_null());
+
+        let provider_secret_ref = "bw://vault/item/login";
+        let complete_resp = complete_trusted_input_session(
+            &app,
+            &cfg,
+            session_id,
+            completion_token,
+            provider_secret_ref,
+        )
+        .await;
+        assert_eq!(complete_resp.status(), StatusCode::OK);
+        let complete_json = json_response(complete_resp).await;
+        let opaque_ref = complete_json["data"]["opaque_ref"]
+            .as_str()
+            .expect("opaque ref");
+        assert_eq!(complete_json["data"]["status"], "completed");
+        assert!(opaque_ref.starts_with("tir://session/"));
+        assert!(!complete_json.to_string().contains(provider_secret_ref));
+
+        let completed_resp = get_trusted_input_session(&app, &cfg, session_id).await;
+        assert_eq!(completed_resp.status(), StatusCode::OK);
+        let completed_json = json_response(completed_resp).await;
+        assert_eq!(completed_json["data"]["opaque_ref"], opaque_ref);
+        assert!(!completed_json.to_string().contains(provider_secret_ref));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn trusted_input_opaque_ref_can_only_be_consumed_once() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+
+        let session_json = start_trusted_input_session(&app, &cfg).await;
+        let session_id = session_json["data"]["id"]
+            .as_str()
+            .expect("trusted input session id");
+        let completion_token = session_json["data"]["completion_token"]
+            .as_str()
+            .expect("trusted input completion token");
+
+        let complete_resp = complete_trusted_input_session(
+            &app,
+            &cfg,
+            session_id,
+            completion_token,
+            "bw://vault/item/login",
+        )
+        .await;
+        assert_eq!(complete_resp.status(), StatusCode::OK);
+        let complete_json = json_response(complete_resp).await;
+        let opaque_ref = complete_json["data"]["opaque_ref"]
+            .as_str()
+            .expect("opaque ref")
+            .to_string();
+
+        let first_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": opaque_ref,
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "trusted host input"
+                })
+                .to_string(),
+            ))?;
+        let first_resp = app.clone().oneshot(first_req).await?;
+        assert_eq!(first_resp.status(), StatusCode::OK);
+
+        let second_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": opaque_ref,
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "trusted host input replay"
+                })
+                .to_string(),
+            ))?;
+        let second_resp = app.clone().oneshot(second_req).await?;
+        assert_eq!(second_resp.status(), StatusCode::CONFLICT);
+        let second_json = json_response(second_resp).await;
+        assert_eq!(second_json["code"], "trusted_input_consumed");
         Ok(())
     }
 
@@ -1280,7 +2096,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_rejects_unsupported_adapter_actions() -> anyhow::Result<()> {
+    async fn policy_denies_unsupported_adapter_actions_before_execution() -> anyhow::Result<()> {
         let (app, cfg) =
             setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
 
@@ -1300,40 +2116,9 @@ mod tests {
                 .to_string(),
             ))?;
         let create_resp = app.clone().oneshot(create_req).await?;
-        assert_eq!(create_resp.status(), StatusCode::OK);
+        assert_eq!(create_resp.status(), StatusCode::FORBIDDEN);
         let create_json = json_response(create_resp).await;
-        let id = create_json["data"]["id"].as_str().expect("id").to_string();
-
-        let approve_req = Request::builder()
-            .method("POST")
-            .uri(format!("/v1/requests/{id}/approve"))
-            .header("x-api-key", &cfg.approver_api_key)
-            .body(Body::empty())?;
-        let approve_resp = app.clone().oneshot(approve_req).await?;
-        let approve_json = json_response(approve_resp).await;
-        let token = approve_json["data"]["capability_token"]
-            .as_str()
-            .expect("capability token");
-
-        let exec_req = Request::builder()
-            .method("POST")
-            .uri("/v1/execute")
-            .header("content-type", "application/json")
-            .header("x-api-key", &cfg.client_api_key)
-            .body(Body::from(
-                json!({
-                    "id": id,
-                    "capability_token": token,
-                    "action": "copy_secret",
-                    "target": "https://example.com/login"
-                })
-                .to_string(),
-            ))?;
-
-        let resp = app.clone().oneshot(exec_req).await?;
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        let body = json_response(resp).await;
-        assert_eq!(body["code"], "adapter_action_unsupported");
+        assert_eq!(create_json["code"], "policy_denied");
         Ok(())
     }
 
@@ -1392,6 +2177,113 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = json_response(resp).await;
         assert_eq!(body["code"], "adapter_target_mismatch");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_uses_request_sign_adapter_without_leaking_plaintext() -> anyhow::Result<()> {
+        let (app, cfg) =
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let id = create_request_for_action(
+            &app,
+            &cfg,
+            "request_sign",
+            "bw://vault/item/login",
+            "request_sign",
+            "https://example.com/sign",
+            "sign outbound request",
+        )
+        .await?;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "request_sign",
+                    "target": "https://example.com/sign"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_response(resp).await;
+        assert_eq!(
+            body["data"]["result"]["adapter"]["adapter"],
+            "request_sign_stub"
+        );
+        assert_eq!(body["data"]["result"]["adapter"]["outcome"], "signed");
+        assert!(!body.to_string().contains("stub-secret-material"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_uses_credential_handoff_adapter_without_leaking_plaintext(
+    ) -> anyhow::Result<()> {
+        let (app, cfg) =
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let id = create_request_for_action(
+            &app,
+            &cfg,
+            "credential_handoff",
+            "bw://vault/item/login",
+            "credential_handoff",
+            "handoff://local-helper/session",
+            "handoff credential to trusted helper",
+        )
+        .await?;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "credential_handoff",
+                    "target": "handoff://local-helper/session"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_response(resp).await;
+        assert_eq!(
+            body["data"]["result"]["adapter"]["adapter"],
+            "credential_handoff_stub"
+        );
+        assert_eq!(body["data"]["result"]["adapter"]["outcome"], "handed_off");
+        assert!(!body.to_string().contains("stub-secret-material"));
         Ok(())
     }
 
@@ -1501,6 +2393,326 @@ mod tests {
             ))?;
         let resp = app.clone().oneshot(req).await?;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn policy_engine_marks_public_request_sign_as_step_up_with_explanation(
+    ) -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "request_sign",
+                    "secret_ref": "bw://vault/item/login",
+                    "action": "request_sign",
+                    "target": "https://example.com/sign",
+                    "reason": "sign outbound request"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_response(resp).await;
+        assert_eq!(body["data"]["status"], "pending_approval");
+        assert_eq!(body["data"]["policy"]["outcome"], "step_up");
+        assert_eq!(body["data"]["policy"]["environment"], "public");
+        assert!(
+            body["data"]["policy"]["risk_score"]
+                .as_i64()
+                .expect("risk score")
+                >= 60
+        );
+        assert!(body["data"]["policy"]["reasons"]
+            .as_array()
+            .expect("policy reasons")
+            .iter()
+            .any(|item| item == "signing_action"));
+        assert!(body["data"]["policy"]["reasons"]
+            .as_array()
+            .expect("policy reasons")
+            .iter()
+            .any(|item| item == "public_target"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn policy_engine_denies_secret_export_actions_fail_closed() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "secret_export",
+                    "secret_ref": "bw://vault/item/login",
+                    "action": "secret_export",
+                    "target": "https://example.com/export",
+                    "reason": "unsafe export"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "policy_denied");
+        assert!(!body.to_string().contains("bw://vault/item/login"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_payload_includes_policy_summary() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+
+        let create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "request_sign",
+                    "secret_ref": "bw://vault/item/login",
+                    "action": "request_sign",
+                    "target": "https://example.com/sign",
+                    "reason": "sign outbound request"
+                })
+                .to_string(),
+            ))?;
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_json = json_response(create_resp).await;
+        let id = create_json["data"]["id"].as_str().expect("id").to_string();
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+        let approve_json = json_response(approve_resp).await;
+
+        assert_eq!(
+            approve_json["data"]["approval_payload"]["policy"]["outcome"],
+            "step_up"
+        );
+        assert_eq!(
+            approve_json["data"]["approval_payload"]["policy"]["environment"],
+            "public"
+        );
+        assert!(
+            approve_json["data"]["approval_payload"]["policy"]["risk_score"]
+                .as_i64()
+                .expect("risk score")
+                >= 60
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn health_reports_identity_verification_mode() -> anyhow::Result<()> {
+        let (app, _cfg) = setup_app_with_identity_mode(
+            crate::provider::ProviderBridgeMode::Off,
+            "off",
+            crate::identity::IdentityVerificationMode::Stub,
+        )
+        .await?;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/healthz")
+            .body(Body::empty())?;
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_response(resp).await;
+        assert_eq!(body["identity"]["mode"], "stub");
+        assert_eq!(body["identity"]["configured"], true);
+        assert_eq!(body["identity"]["ready"], true);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_request_rejects_missing_identity_headers_when_attestation_required(
+    ) -> anyhow::Result<()> {
+        let (app, cfg) = setup_app_with_identity_mode(
+            crate::provider::ProviderBridgeMode::Off,
+            "off",
+            crate::identity::IdentityVerificationMode::Stub,
+        )
+        .await?;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "request_type": "password_fill",
+                    "secret_ref": "bw://vault/item/login",
+                    "action": "password_fill",
+                    "target": "https://example.com/login",
+                    "reason": "identity enforced"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "invalid_identity");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approval_payload_includes_verified_identity_summary() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app_with_identity_mode(
+            crate::provider::ProviderBridgeMode::Off,
+            "off",
+            crate::identity::IdentityVerificationMode::Stub,
+        )
+        .await?;
+
+        let mut create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key);
+        for (key, value) in signed_identity_headers(
+            &cfg,
+            "request_sign",
+            "local-helper-runtime",
+            "local-helper-host",
+        ) {
+            create_req = create_req.header(key, value);
+        }
+        let create_req = create_req.body(Body::from(
+            json!({
+                "request_type": "request_sign",
+                "secret_ref": "bw://vault/item/login",
+                "action": "request_sign",
+                "target": "https://example.com/sign",
+                "reason": "identity verified sign"
+            })
+            .to_string(),
+        ))?;
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_json = json_response(create_resp).await;
+        let id = create_json["data"]["id"].as_str().expect("id").to_string();
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+        let approve_json = json_response(approve_resp).await;
+
+        assert_eq!(
+            approve_json["data"]["approval_payload"]["identity"]["status"],
+            "verified"
+        );
+        assert_eq!(
+            approve_json["data"]["approval_payload"]["identity"]["runtime_id"],
+            "local-helper-runtime"
+        );
+        assert_eq!(
+            approve_json["data"]["approval_payload"]["identity"]["host_id"],
+            "local-helper-host"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_identity_mismatch_after_approval() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app_with_identity_mode(
+            crate::provider::ProviderBridgeMode::Stub,
+            "stub",
+            crate::identity::IdentityVerificationMode::Stub,
+        )
+        .await?;
+
+        let mut create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key);
+        for (key, value) in signed_identity_headers(
+            &cfg,
+            "request_sign",
+            "local-helper-runtime",
+            "local-helper-host",
+        ) {
+            create_req = create_req.header(key, value);
+        }
+        let create_req = create_req.body(Body::from(
+            json!({
+                "request_type": "request_sign",
+                "secret_ref": "bw://vault/item/login",
+                "action": "request_sign",
+                "target": "https://example.com/sign",
+                "reason": "identity mismatch test"
+            })
+            .to_string(),
+        ))?;
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_json = json_response(create_resp).await;
+        let id = create_json["data"]["id"].as_str().expect("id").to_string();
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let mut exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key);
+        for (key, value) in signed_identity_headers(
+            &cfg,
+            "request_sign",
+            "local-helper-runtime",
+            "secondary-helper-host",
+        ) {
+            exec_req = exec_req.header(key, value);
+        }
+        let exec_req = exec_req.body(Body::from(
+            json!({
+                "id": id,
+                "capability_token": token,
+                "action": "request_sign",
+                "target": "https://example.com/sign"
+            })
+            .to_string(),
+        ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "identity_mismatch");
         Ok(())
     }
 
@@ -1641,6 +2853,112 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn rotating_approver_key_invalidates_old_key() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+
+        let rotate_req = Request::builder()
+            .method("POST")
+            .uri("/v1/admin/keys/approver/rotate")
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let rotate_resp = app.clone().oneshot(rotate_req).await?;
+        assert_eq!(rotate_resp.status(), StatusCode::OK);
+        let rotate_json = json_response(rotate_resp).await;
+        let new_approver_key = rotate_json["data"]["api_key"]
+            .as_str()
+            .expect("new api key")
+            .to_string();
+
+        let old_req = Request::builder()
+            .method("GET")
+            .uri("/v1/audit")
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let old_resp = app.clone().oneshot(old_req).await?;
+        assert_eq!(old_resp.status(), StatusCode::UNAUTHORIZED);
+
+        let new_req = Request::builder()
+            .method("GET")
+            .uri("/v1/audit")
+            .header("x-api-key", new_approver_key)
+            .body(Body::empty())?;
+        let new_resp = app.clone().oneshot(new_req).await?;
+        assert_eq!(new_resp.status(), StatusCode::OK);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn audit_chain_verification_detects_tampering() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app().await?;
+        let _id = create_password_request(&app, &cfg).await;
+
+        let baseline = crate::audit::verify_audit_chain(&cfg.db_url).await?;
+        assert!(baseline.ok);
+
+        let pool = connect_sqlite(&cfg.db_url).await?;
+        sqlx::query(
+            "UPDATE audit_events SET details = ? WHERE id = (SELECT MAX(id) FROM audit_events)",
+        )
+        .bind("{\"tampered\":true}")
+        .execute(&pool)
+        .await?;
+
+        let tampered = crate::audit::verify_audit_chain(&cfg.db_url).await?;
+        assert!(!tampered.ok);
+        assert!(tampered.broken_at_id.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forensic_bundle_export_is_redact_safe_and_tamper_evident() -> anyhow::Result<()> {
+        let (app, cfg) =
+            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let id = create_password_request(&app, &cfg).await;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+        let exec_resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(exec_resp.status(), StatusCode::OK);
+
+        let bundle_dir = tempfile::tempdir()?;
+        let bundle =
+            crate::audit::export_forensic_bundle(&cfg.db_url, bundle_dir.path(), Some(&id)).await?;
+
+        let summary = fs::read_to_string(bundle.summary_path)?;
+        let audit_log = fs::read_to_string(bundle.audit_path)?;
+        let request_log = fs::read_to_string(bundle.requests_path)?;
+
+        assert!(summary.contains("\"ok\": true"));
+        assert!(!summary.contains("bw://vault/item/login"));
+        assert!(!audit_log.contains("bw://vault/item/login"));
+        assert!(!request_log.contains("bw://vault/item/login"));
+        Ok(())
+    }
+
     mod e2e_harness {
         use super::*;
 
@@ -1707,6 +3025,209 @@ mod tests {
             assert!(!approver_stdout.contains(&outcome.capability_token));
             assert!(!execute_stdout.contains(&outcome.capability_token));
 
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn trusted_input_node_to_node_flow_keeps_transcripts_secret_free(
+        ) -> anyhow::Result<()> {
+            let outcome = run_trusted_input_node_to_node_happy_path().await?;
+            let summary = fs::read_to_string(outcome.artifact_dir.join("summary.json"))?;
+            let trusted_start_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("trusted-start.stdout.log"))?;
+            let trusted_complete_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("trusted-complete.stdout.log"))?;
+
+            assert_eq!(outcome.execute_result["status"], 200);
+            assert_eq!(outcome.trusted_start_result["status"], 200);
+            assert_eq!(outcome.create_result["id"], outcome.request_id);
+            assert_eq!(
+                outcome.trusted_complete_result["body"]["data"]["opaque_ref"],
+                outcome.opaque_ref
+            );
+            assert_eq!(
+                outcome.approve_result["body"]["data"]["capability_token"],
+                outcome.capability_token
+            );
+            assert_secret_free(&outcome.trusted_start_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.trusted_start_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.trusted_complete_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.trusted_complete_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.create_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.create_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stderr, &outcome.fixture_secret);
+            assert_secret_free(&summary, &outcome.fixture_secret);
+            assert_secret_free(&trusted_start_stdout, &outcome.fixture_secret);
+            assert_secret_free(&trusted_complete_stdout, &outcome.fixture_secret);
+            assert!(!outcome
+                .trusted_complete_result
+                .to_string()
+                .contains("bw://vault/item/login"));
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn supported_host_redaction_filters_canary_and_provider_refs() -> anyhow::Result<()> {
+            let artifact_dir = new_artifact_dir("supported-host-redaction")?;
+            let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
+            let canary = "loop1-canary-secret";
+
+            let trusted_start = run_e2e_node_with_env(
+                &[
+                    "trusted-start".to_string(),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--request-type".to_string(),
+                    "password_fill".to_string(),
+                    "--action".to_string(),
+                    "password_fill".to_string(),
+                    "--target".to_string(),
+                    "https://example.com/login".to_string(),
+                    "--reason".to_string(),
+                    canary.to_string(),
+                ],
+                &[
+                    ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                    ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+                ],
+            )
+            .await?;
+            let session_id = trusted_start.result["id"]
+                .as_str()
+                .context("trusted start result missing session id")?
+                .to_string();
+            let completion_token = trusted_start.result["completion_token"]
+                .as_str()
+                .context("trusted start result missing completion token")?
+                .to_string();
+
+            let trusted_complete = run_e2e_node_with_env(
+                &[
+                    "trusted-complete".to_string(),
+                    "--broker-url".to_string(),
+                    broker_url.clone(),
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--id".to_string(),
+                    session_id,
+                    "--completion-token".to_string(),
+                    completion_token,
+                    "--secret-ref".to_string(),
+                    "bw://vault/item/login".to_string(),
+                ],
+                &[
+                    ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                    ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+                ],
+            )
+            .await?;
+            let opaque_ref = trusted_complete.result["opaque_ref"]
+                .as_str()
+                .context("trusted complete result missing opaque ref")?
+                .to_string();
+
+            let create = run_e2e_node_with_env(
+                &[
+                    "create".to_string(),
+                    "--broker-url".to_string(),
+                    broker_url,
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--request-type".to_string(),
+                    "password_fill".to_string(),
+                    "--secret-ref".to_string(),
+                    opaque_ref,
+                    "--action".to_string(),
+                    "password_fill".to_string(),
+                    "--target".to_string(),
+                    "https://example.com/login".to_string(),
+                    "--reason".to_string(),
+                    canary.to_string(),
+                ],
+                &[
+                    ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                    ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+                ],
+            )
+            .await?;
+
+            stop_broker(broker_child).await?;
+
+            assert!(!trusted_start.stdout.contains(canary));
+            assert!(!trusted_complete.stdout.contains("bw://vault/item/login"));
+            assert!(!create.stdout.contains(canary));
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn supported_host_redaction_failure_fails_closed() -> anyhow::Result<()> {
+            let artifact_dir = new_artifact_dir("supported-host-redaction-fail-closed")?;
+            let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
+
+            let failed = run_e2e_node_expect_failure(
+                &[
+                    "trusted-start".to_string(),
+                    "--broker-url".to_string(),
+                    broker_url,
+                    "--api-key".to_string(),
+                    "loop5-client-key-1234567890".to_string(),
+                    "--request-type".to_string(),
+                    "password_fill".to_string(),
+                    "--action".to_string(),
+                    "password_fill".to_string(),
+                    "--target".to_string(),
+                    "https://example.com/login".to_string(),
+                    "--reason".to_string(),
+                    "loop1-fail-closed".to_string(),
+                ],
+                &[
+                    ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                    ("SECRET_BROKER_E2E_REDACTION_FORCE_FAILURE", "1"),
+                ],
+            )
+            .await?;
+
+            stop_broker(broker_child).await?;
+
+            assert!(failed.stderr.contains("redaction"));
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn request_sign_node_to_node_flow_keeps_transcripts_secret_free() -> anyhow::Result<()>
+        {
+            let outcome = run_request_sign_node_to_node_happy_path().await?;
+
+            assert_eq!(outcome.execute_result["status"], 200);
+            assert_eq!(
+                outcome.execute_result["body"]["data"]["result"]["adapter"]["adapter"],
+                "request_sign_stub"
+            );
+            assert_secret_free(&outcome.client_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn credential_handoff_node_to_node_flow_keeps_transcripts_secret_free(
+        ) -> anyhow::Result<()> {
+            let outcome = run_handoff_node_to_node_happy_path().await?;
+
+            assert_eq!(outcome.execute_result["status"], 200);
+            assert_eq!(
+                outcome.execute_result["body"]["data"]["result"]["adapter"]["adapter"],
+                "credential_handoff_stub"
+            );
+            assert_secret_free(&outcome.client_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
             Ok(())
         }
     }

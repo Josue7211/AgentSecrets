@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  schedule:
+    - cron: "0 6 * * *"
 
 jobs:
   rust:
@@ -30,11 +32,47 @@ jobs:
       - name: Claim audit
         run: bash scripts/check-security-claims.sh
 
+      - name: Check
+        run: cargo check --all-targets --all-features
+
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Node-to-node E2E harness
         run: bash scripts/run-e2e-harness.sh
 
-      - name: Test
+      - name: Unit and integration tests
         run: cargo test --all-targets --all-features -- --nocapture
+
+      - name: V2 ship gate summary
+        run: bash scripts/check-v2-ship-gate.sh
+
+      - name: V3 ship gate summary
+        run: bash scripts/check-v3-ship-gate.sh
+
+      - name: Rotation and recovery drills
+        run: bash scripts/run-rotation-recovery-drills.sh
+
+      - name: PR-safe adversarial suite
+        run: bash scripts/run-adversarial-suite.sh pr
+
+      - name: V4 ship gate summary
+        run: bash scripts/check-v4-ship-gate.sh
+
+  adversarial-extended:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Extended adversarial suite
+        run: bash scripts/run-adversarial-suite.sh extended
