@@ -13,7 +13,7 @@ This document is the V3 host-certification source of truth.
 | Host | Status | Trusted input | Transcript/log redaction | Trusted adapters | Evidence | Known limits |
 | --- | --- | --- | --- | --- | --- | --- |
 | Local helper harness (`src/bin/e2e-node.rs`) | shipped | yes | yes | `password_fill`, `request_sign`, `credential_handoff` | `cargo test e2e_harness:: -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; not a user-facing product host |
-| OpenClaw-style HTTP host | preview | contract documented | not certified | contract only | [docs/OPENCLAW.md](docs/OPENCLAW.md) | No host-specific E2E certification in this repo |
+| OpenClaw-style HTTP host | shipped | yes | yes | `trusted-input`, `request`, `approve`, `execute` over the documented HTTP path | `cargo test openclaw_host_ -- --nocapture`, `bash scripts/run-openclaw-e2e.sh` | Certified only for the documented OpenClaw host path; see [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) |
 | Claude / Codex / arbitrary external runtimes | unsupported | no host-specific certification | no host-specific certification | no host-specific certification | none | Do not claim V3 end-to-end safety |
 
 ## Per-host threat notes
@@ -30,9 +30,11 @@ This document is the V3 host-certification source of truth.
 
 ### OpenClaw-style HTTP host
 
-- Trust boundary: OpenClaw stays untrusted and only talks to the broker API
-- Current risk: no host-specific transcript/log assertions in this repo
-- Current certification status: preview only
+- Trust boundary: OpenClaw stays untrusted and only talks to the broker API over the documented HTTP contract
+- Untrusted sinks: transcript, stdout, stderr, structured logs, retry logs, tool-call payloads, and failure traces
+- Trusted contract: broker-issued opaque refs, masked approval payloads, and masked adapter results only
+- Certification status: shipped for the documented OpenClaw host path
+- Evidence: `cargo test openclaw_host_ -- --nocapture`, `bash scripts/run-openclaw-e2e.sh`
 
 ### Unsupported external runtimes
 

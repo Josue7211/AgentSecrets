@@ -42,14 +42,16 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Real browser-fill or signing adapters beyond the current stubbed sanctioned-adapter contract.
 - Production Bitwarden mediation implemented in this repo.
 - End-to-end node-to-node verification across real host integrations.
-- Supported-host certification for OpenClaw or any other external runtime.
+- Supported-host certification for Claude, Codex, or arbitrary external runtime.
 - Strong V4 identity claims for external runtimes beyond the local stub attestation path.
 
 ## Supported trust claim in the current repo state
 
 AgentSecrets currently provides broker-level no-plaintext-response guarantees. It does **not** yet provide a complete end-to-end zero-trust secret-use system for external host apps.
 For supported hosts that use the trusted-input session flow, the repo now also provides a narrow ingress contract where the agent-visible path only handles broker-issued opaque refs.
-For the local supported-host helper path exercised by the harness, the repo also provides a narrow redaction contract for untrusted transcript and log sinks plus sanctioned adapter-path coverage. Those claims do not automatically extend to external host apps.
+For the local supported-host helper path exercised by the harness, the repo also provides a narrow redaction contract for untrusted transcript and log sinks plus sanctioned adapter-path coverage.
+For the certified OpenClaw host path, the repo now also provides host-specific evidence for trusted-input ingress, transcript/log redaction, approval masking, and adapter execution without plaintext leakage.
+Those claims do not automatically extend to external host apps.
 Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only host-certification authority for V3 claims.
 Use [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) as the only V4 control and claim authority.
 

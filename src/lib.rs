@@ -919,6 +919,10 @@ mod tests {
         Ok(())
     }
 
+    fn host_command(prefix: &str, command: &str) -> String {
+        format!("{prefix}{command}")
+    }
+
     fn parse_result_line(stdout: &str) -> anyhow::Result<Value> {
         let line = stdout
             .lines()
@@ -1073,6 +1077,7 @@ mod tests {
         label: &str,
         execute_action: &str,
         execute_target: &str,
+        command_prefix: &str,
     ) -> anyhow::Result<NodeToNodeOutcome> {
         let artifact_dir = new_artifact_dir(label)?;
         let fixture_secret = "stub-secret-material".to_string();
@@ -1080,7 +1085,7 @@ mod tests {
         let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
 
         let create = run_e2e_node(&[
-            "create".to_string(),
+            host_command(command_prefix, "create"),
             "--broker-url".to_string(),
             broker_url.clone(),
             "--api-key".to_string(),
@@ -1103,7 +1108,7 @@ mod tests {
             .to_string();
 
         let approve = run_e2e_node(&[
-            "approve".to_string(),
+            host_command(command_prefix, "approve"),
             "--broker-url".to_string(),
             broker_url.clone(),
             "--api-key".to_string(),
@@ -1118,7 +1123,7 @@ mod tests {
             .to_string();
 
         let execute = run_e2e_node(&[
-            "execute".to_string(),
+            host_command(command_prefix, "execute"),
             "--broker-url".to_string(),
             broker_url,
             "--api-key".to_string(),
@@ -1205,6 +1210,7 @@ mod tests {
             "node-to-node-happy-path",
             "password_fill",
             "https://example.com/login",
+            "",
         )
         .await
     }
@@ -1214,6 +1220,7 @@ mod tests {
             "node-to-node-target-mismatch",
             "password_fill",
             "https://example.com/profile",
+            "",
         )
         .await
     }
@@ -1226,7 +1233,7 @@ mod tests {
         let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
 
         let trusted_start = run_e2e_node(&[
-            "trusted-start".to_string(),
+            host_command("", "trusted-start"),
             "--broker-url".to_string(),
             broker_url.clone(),
             "--api-key".to_string(),
@@ -1251,7 +1258,7 @@ mod tests {
             .to_string();
 
         let trusted_complete = run_e2e_node(&[
-            "trusted-complete".to_string(),
+            host_command("", "trusted-complete"),
             "--broker-url".to_string(),
             broker_url.clone(),
             "--api-key".to_string(),
@@ -1293,7 +1300,7 @@ mod tests {
             .to_string();
 
         let approve = run_e2e_node(&[
-            "approve".to_string(),
+            host_command("", "approve"),
             "--broker-url".to_string(),
             broker_url.clone(),
             "--api-key".to_string(),
@@ -1308,7 +1315,7 @@ mod tests {
             .to_string();
 
         let execute = run_e2e_node(&[
-            "execute".to_string(),
+            host_command("", "execute"),
             "--broker-url".to_string(),
             broker_url,
             "--api-key".to_string(),
@@ -1427,6 +1434,7 @@ mod tests {
         request_type: &str,
         action: &str,
         target: &str,
+        command_prefix: &str,
     ) -> anyhow::Result<NodeToNodeOutcome> {
         let artifact_dir = new_artifact_dir(label)?;
         let fixture_secret = "stub-secret-material".to_string();
@@ -1434,7 +1442,7 @@ mod tests {
         let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
 
         let create = run_e2e_node(&[
-            "create".to_string(),
+            host_command(command_prefix, "create"),
             "--broker-url".to_string(),
             broker_url.clone(),
             "--api-key".to_string(),
@@ -1457,7 +1465,7 @@ mod tests {
             .to_string();
 
         let approve = run_e2e_node(&[
-            "approve".to_string(),
+            host_command(command_prefix, "approve"),
             "--broker-url".to_string(),
             broker_url.clone(),
             "--api-key".to_string(),
@@ -1472,7 +1480,7 @@ mod tests {
             .to_string();
 
         let execute = run_e2e_node(&[
-            "execute".to_string(),
+            host_command(command_prefix, "execute"),
             "--broker-url".to_string(),
             broker_url,
             "--api-key".to_string(),
@@ -1560,6 +1568,7 @@ mod tests {
             "request_sign",
             "request_sign",
             "https://example.com/sign",
+            "",
         )
         .await
     }
@@ -1570,8 +1579,244 @@ mod tests {
             "credential_handoff",
             "credential_handoff",
             "handoff://local-helper/session",
+            "",
         )
         .await
+    }
+
+    async fn run_openclaw_host_happy_path() -> anyhow::Result<TrustedInputNodeToNodeOutcome> {
+        let artifact_dir = new_artifact_dir("openclaw-host-happy-path")?;
+        let fixture_secret = "stub-secret-material".to_string();
+        let canary = "openclaw-canary-secret";
+
+        let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
+
+        let trusted_start = run_e2e_node_with_env(
+            &[
+                host_command("openclaw-", "trusted-start"),
+                "--broker-url".to_string(),
+                broker_url.clone(),
+                "--api-key".to_string(),
+                "loop5-client-key-1234567890".to_string(),
+                "--request-type".to_string(),
+                "password_fill".to_string(),
+                "--action".to_string(),
+                "password_fill".to_string(),
+                "--target".to_string(),
+                "https://example.com/login".to_string(),
+                "--reason".to_string(),
+                canary.to_string(),
+            ],
+            &[
+                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+            ],
+        )
+        .await?;
+        let session_id = trusted_start.result["id"]
+            .as_str()
+            .context("trusted start result missing session id")?
+            .to_string();
+        let completion_token = trusted_start.result["completion_token"]
+            .as_str()
+            .context("trusted start result missing completion token")?
+            .to_string();
+
+        let trusted_complete = run_e2e_node_with_env(
+            &[
+                host_command("openclaw-", "trusted-complete"),
+                "--broker-url".to_string(),
+                broker_url.clone(),
+                "--api-key".to_string(),
+                "loop5-client-key-1234567890".to_string(),
+                "--id".to_string(),
+                session_id,
+                "--completion-token".to_string(),
+                completion_token,
+                "--secret-ref".to_string(),
+                "bw://vault/item/login".to_string(),
+            ],
+            &[
+                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+            ],
+        )
+        .await?;
+        let opaque_ref = trusted_complete.result["opaque_ref"]
+            .as_str()
+            .context("trusted complete result missing opaque ref")?
+            .to_string();
+
+        let create = run_e2e_node_with_env(
+            &[
+                host_command("openclaw-", "create"),
+                "--broker-url".to_string(),
+                broker_url.clone(),
+                "--api-key".to_string(),
+                "loop5-client-key-1234567890".to_string(),
+                "--request-type".to_string(),
+                "password_fill".to_string(),
+                "--secret-ref".to_string(),
+                opaque_ref.clone(),
+                "--action".to_string(),
+                "password_fill".to_string(),
+                "--target".to_string(),
+                "https://example.com/login".to_string(),
+                "--reason".to_string(),
+                canary.to_string(),
+            ],
+            &[
+                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+            ],
+        )
+        .await?;
+        let request_id = create.result["id"]
+            .as_str()
+            .context("create result missing request id")?
+            .to_string();
+
+        let approve = run_e2e_node_with_env(
+            &[
+                host_command("openclaw-", "approve"),
+                "--broker-url".to_string(),
+                broker_url.clone(),
+                "--api-key".to_string(),
+                "loop5-approver-key-1234567890".to_string(),
+                "--id".to_string(),
+                request_id.clone(),
+            ],
+            &[
+                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+            ],
+        )
+        .await?;
+        let capability_token = approve.result["capability_token"]
+            .as_str()
+            .context("approve result missing capability token")?
+            .to_string();
+
+        let execute = run_e2e_node_with_env(
+            &[
+                host_command("openclaw-", "execute"),
+                "--broker-url".to_string(),
+                broker_url,
+                "--api-key".to_string(),
+                "loop5-client-key-1234567890".to_string(),
+                "--id".to_string(),
+                request_id.clone(),
+                "--capability-token".to_string(),
+                capability_token.clone(),
+                "--action".to_string(),
+                "password_fill".to_string(),
+                "--target".to_string(),
+                "https://example.com/login".to_string(),
+            ],
+            &[
+                ("SECRET_BROKER_E2E_REDACTION_MODE", "supported"),
+                ("SECRET_BROKER_E2E_CANARY_SECRET", canary),
+            ],
+        )
+        .await?;
+
+        let trusted_start_result = trusted_start.result.clone();
+        let trusted_complete_result = trusted_complete.result.clone();
+        let create_result = create.result.clone();
+        let approve_result = approve.result.clone();
+        let execute_result = execute.result.clone();
+
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-start.stdout.log"),
+            &trusted_start.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-start.stderr.log"),
+            &trusted_start.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-complete.stdout.log"),
+            &trusted_complete.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("trusted-complete.stderr.log"),
+            &trusted_complete.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("client.stdout.log"),
+            &create.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("client.stderr.log"),
+            &create.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stdout.log"),
+            &approve.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("approver.stderr.log"),
+            &approve.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stdout.log"),
+            &execute.stdout,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("execute.stderr.log"),
+            &execute.stderr,
+            &[&fixture_secret, &capability_token],
+        )?;
+        write_redacted_artifact(
+            &artifact_dir.join("summary.json"),
+            &json!({
+                "host": "openclaw",
+                "opaque_ref": opaque_ref,
+                "request_id": request_id,
+                "capability_token": capability_token,
+                "trusted_start": trusted_start_result,
+                "trusted_complete": trusted_complete_result,
+                "create": create_result,
+                "approve": approve_result,
+                "execute": execute_result
+            })
+            .to_string(),
+            &[&fixture_secret, &capability_token],
+        )?;
+
+        stop_broker(broker_child).await?;
+
+        Ok(TrustedInputNodeToNodeOutcome {
+            artifact_dir,
+            fixture_secret,
+            opaque_ref,
+            request_id,
+            capability_token,
+            trusted_start_stdout: trusted_start.stdout,
+            trusted_start_stderr: trusted_start.stderr,
+            trusted_complete_stdout: trusted_complete.stdout,
+            trusted_complete_stderr: trusted_complete.stderr,
+            create_stdout: create.stdout,
+            create_stderr: create.stderr,
+            approver_stdout: approve.stdout,
+            approver_stderr: approve.stderr,
+            execute_stdout: execute.stdout,
+            execute_stderr: execute.stderr,
+            trusted_start_result,
+            trusted_complete_result,
+            create_result,
+            approve_result,
+            execute_result,
+        })
     }
 
     async fn update_request_action_target(
@@ -3066,6 +3311,83 @@ mod tests {
                 .trusted_complete_result
                 .to_string()
                 .contains("bw://vault/item/login"));
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn openclaw_host_lane_covers_trusted_input_redaction_and_execution(
+        ) -> anyhow::Result<()> {
+            let outcome = run_openclaw_host_happy_path().await?;
+            let summary = fs::read_to_string(outcome.artifact_dir.join("summary.json"))?;
+            let trusted_start_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("trusted-start.stdout.log"))?;
+            let trusted_complete_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("trusted-complete.stdout.log"))?;
+            let create_stdout = fs::read_to_string(outcome.artifact_dir.join("client.stdout.log"))?;
+            let approver_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("approver.stdout.log"))?;
+            let execute_stdout =
+                fs::read_to_string(outcome.artifact_dir.join("execute.stdout.log"))?;
+
+            assert_eq!(outcome.trusted_start_result["host"], "openclaw");
+            assert_eq!(outcome.trusted_complete_result["host"], "openclaw");
+            assert_eq!(outcome.create_result["host"], "openclaw");
+            assert_eq!(outcome.approve_result["host"], "openclaw");
+            assert_eq!(outcome.execute_result["host"], "openclaw");
+            assert_eq!(outcome.trusted_start_result["status"], 200);
+            assert_eq!(outcome.trusted_complete_result["status"], 200);
+            assert!(
+                outcome.create_result["body"]["data"]["secret_ref_masked"]
+                    .as_str()
+                    .expect("create masked secret ref")
+                    == "bw****in"
+            );
+            assert_eq!(
+                outcome.execute_result["body"]["data"]["result"]["adapter"]["adapter"],
+                "password_fill_stub"
+            );
+            assert_eq!(
+                outcome.execute_result["body"]["data"]["result"]["adapter"]["outcome"],
+                "filled"
+            );
+            assert_eq!(
+                outcome.trusted_complete_result["body"]["data"]["opaque_ref"],
+                outcome.opaque_ref
+            );
+            assert!(outcome.opaque_ref.starts_with("tir://session/"));
+            assert!(
+                outcome.approve_result["body"]["data"]["approval_payload"]["secret_ref_masked"]
+                    .as_str()
+                    .expect("approval masked secret ref")
+                    == "bw****in"
+            );
+            assert!(!outcome
+                .trusted_complete_result
+                .to_string()
+                .contains("bw://vault/item/login"));
+            assert!(!outcome
+                .execute_result
+                .to_string()
+                .contains("stub-secret-material"));
+            assert_secret_free(&outcome.trusted_start_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.trusted_start_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.trusted_complete_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.trusted_complete_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.create_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.create_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.approver_stderr, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stdout, &outcome.fixture_secret);
+            assert_secret_free(&outcome.execute_stderr, &outcome.fixture_secret);
+            assert_secret_free(&summary, &outcome.fixture_secret);
+            assert_secret_free(&trusted_start_stdout, &outcome.fixture_secret);
+            assert_secret_free(&trusted_complete_stdout, &outcome.fixture_secret);
+            assert_secret_free(&create_stdout, &outcome.fixture_secret);
+            assert_secret_free(&approver_stdout, &outcome.fixture_secret);
+            assert_secret_free(&execute_stdout, &outcome.fixture_secret);
+            assert!(!trusted_complete_stdout.contains("bw://vault/item/login"));
+            assert!(!execute_stdout.contains("stub-secret-material"));
 
             Ok(())
         }

@@ -10,6 +10,12 @@ enum RedactionMode {
     Supported,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostKind {
+    LocalHelper,
+    OpenClaw,
+}
+
 #[derive(Debug, Clone)]
 struct TranscriptRedactor {
     mode: RedactionMode,
@@ -24,11 +30,18 @@ async fn main() -> Result<()> {
     let flags = parse_flags(args.collect())?;
 
     match command.as_str() {
-        "create" => create_request(flags, &redactor).await,
-        "approve" => approve_request(flags, &redactor).await,
-        "execute" => execute_request(flags, &redactor).await,
-        "trusted-start" => trusted_input_start(flags, &redactor).await,
-        "trusted-complete" => trusted_input_complete(flags, &redactor).await,
+        "create" => create_request(HostKind::LocalHelper, flags, &redactor).await,
+        "approve" => approve_request(HostKind::LocalHelper, flags, &redactor).await,
+        "execute" => execute_request(HostKind::LocalHelper, flags, &redactor).await,
+        "trusted-start" => trusted_input_start(HostKind::LocalHelper, flags, &redactor).await,
+        "trusted-complete" => trusted_input_complete(HostKind::LocalHelper, flags, &redactor).await,
+        "openclaw-create" => create_request(HostKind::OpenClaw, flags, &redactor).await,
+        "openclaw-approve" => approve_request(HostKind::OpenClaw, flags, &redactor).await,
+        "openclaw-execute" => execute_request(HostKind::OpenClaw, flags, &redactor).await,
+        "openclaw-trusted-start" => trusted_input_start(HostKind::OpenClaw, flags, &redactor).await,
+        "openclaw-trusted-complete" => {
+            trusted_input_complete(HostKind::OpenClaw, flags, &redactor).await
+        }
         other => Err(anyhow!("unsupported e2e-node command: {other}")),
     }
 }
@@ -83,6 +96,22 @@ impl TranscriptRedactor {
         output = replace_prefixed_segment(&output, "tit_", "[redacted:completion-token]");
 
         output
+    }
+}
+
+impl HostKind {
+    fn label(self) -> &'static str {
+        match self {
+            HostKind::LocalHelper => "local-helper",
+            HostKind::OpenClaw => "openclaw",
+        }
+    }
+
+    fn transcript_prefix(self) -> &'static str {
+        match self {
+            HostKind::LocalHelper => "transcript",
+            HostKind::OpenClaw => "openclaw:transcript",
+        }
     }
 }
 
@@ -144,6 +173,7 @@ fn required_flag(flags: &HashMap<String, String>, name: &str) -> Result<String> 
 }
 
 async fn create_request(
+    host: HostKind,
     flags: HashMap<String, String>,
     redactor: &TranscriptRedactor,
 ) -> Result<()> {
@@ -159,7 +189,9 @@ async fn create_request(
         .unwrap_or_else(|| action.clone());
 
     redactor.print(&format!(
-        "transcript:create request_type={request_type} action={action} target={target} secret_ref={secret_ref}"
+        "{}:create host={} request_type={request_type} action={action} target={target} secret_ref={secret_ref}",
+        host.transcript_prefix(),
+        host.label()
     ));
 
     let body = json!({
@@ -183,11 +215,18 @@ async fn create_request(
         .await
         .context("create request body decode failed")?;
 
-    redactor.print(&format!("transcript:create status={status}"));
-    redactor.print(&format!("transcript:create body={json_body}"));
+    redactor.print(&format!(
+        "{}:create status={status}",
+        host.transcript_prefix()
+    ));
+    redactor.print(&format!(
+        "{}:create body={json_body}",
+        host.transcript_prefix()
+    ));
     println!(
         "RESULT_JSON={}",
         json!({
+            "host": host.label(),
             "status": status,
             "body": {
                 "ok": json_body["ok"],
@@ -205,6 +244,7 @@ async fn create_request(
 }
 
 async fn approve_request(
+    host: HostKind,
     flags: HashMap<String, String>,
     redactor: &TranscriptRedactor,
 ) -> Result<()> {
@@ -212,7 +252,11 @@ async fn approve_request(
     let api_key = required_flag(&flags, "api-key")?;
     let id = required_flag(&flags, "id")?;
 
-    redactor.print(&format!("transcript:approve id={id}"));
+    redactor.print(&format!(
+        "{}:approve host={} id={id}",
+        host.transcript_prefix(),
+        host.label()
+    ));
 
     let response = Client::new()
         .post(format!("{broker_url}/v1/requests/{id}/approve"))
@@ -226,11 +270,18 @@ async fn approve_request(
         .await
         .context("approve request body decode failed")?;
 
-    redactor.print(&format!("transcript:approve status={status}"));
-    redactor.print(&format!("transcript:approve body={json_body}"));
+    redactor.print(&format!(
+        "{}:approve status={status}",
+        host.transcript_prefix()
+    ));
+    redactor.print(&format!(
+        "{}:approve body={json_body}",
+        host.transcript_prefix()
+    ));
     println!(
         "RESULT_JSON={}",
         json!({
+            "host": host.label(),
             "status": status,
             "body": json_body,
             "capability_token": json_body["data"]["capability_token"]
@@ -240,6 +291,7 @@ async fn approve_request(
 }
 
 async fn execute_request(
+    host: HostKind,
     flags: HashMap<String, String>,
     redactor: &TranscriptRedactor,
 ) -> Result<()> {
@@ -251,7 +303,9 @@ async fn execute_request(
     let target = required_flag(&flags, "target")?;
 
     redactor.print(&format!(
-        "transcript:execute id={id} action={action} target={target}"
+        "{}:execute host={} id={id} action={action} target={target}",
+        host.transcript_prefix(),
+        host.label()
     ));
 
     let response = Client::new()
@@ -272,11 +326,18 @@ async fn execute_request(
         .await
         .context("execute request body decode failed")?;
 
-    redactor.print(&format!("transcript:execute status={status}"));
-    redactor.print(&format!("transcript:execute body={json_body}"));
+    redactor.print(&format!(
+        "{}:execute status={status}",
+        host.transcript_prefix()
+    ));
+    redactor.print(&format!(
+        "{}:execute body={json_body}",
+        host.transcript_prefix()
+    ));
     println!(
         "RESULT_JSON={}",
         json!({
+            "host": host.label(),
             "status": status,
             "body": json_body
         })
@@ -285,6 +346,7 @@ async fn execute_request(
 }
 
 async fn trusted_input_start(
+    host: HostKind,
     flags: HashMap<String, String>,
     redactor: &TranscriptRedactor,
 ) -> Result<()> {
@@ -299,7 +361,9 @@ async fn trusted_input_start(
         .unwrap_or_else(|| action.clone());
 
     redactor.print(&format!(
-        "transcript:trusted-start request_type={request_type} action={action} target={target}"
+        "{}:trusted-start host={} request_type={request_type} action={action} target={target}",
+        host.transcript_prefix(),
+        host.label()
     ));
 
     let response = Client::new()
@@ -320,11 +384,18 @@ async fn trusted_input_start(
         .await
         .context("trusted input start body decode failed")?;
 
-    redactor.print(&format!("transcript:trusted-start status={status}"));
-    redactor.print(&format!("transcript:trusted-start body={json_body}"));
+    redactor.print(&format!(
+        "{}:trusted-start status={status}",
+        host.transcript_prefix()
+    ));
+    redactor.print(&format!(
+        "{}:trusted-start body={json_body}",
+        host.transcript_prefix()
+    ));
     println!(
         "RESULT_JSON={}",
         json!({
+            "host": host.label(),
             "status": status,
             "body": {
                 "ok": json_body["ok"],
@@ -344,6 +415,7 @@ async fn trusted_input_start(
 }
 
 async fn trusted_input_complete(
+    host: HostKind,
     flags: HashMap<String, String>,
     redactor: &TranscriptRedactor,
 ) -> Result<()> {
@@ -354,7 +426,9 @@ async fn trusted_input_complete(
     let secret_ref = required_flag(&flags, "secret-ref")?;
 
     redactor.print(&format!(
-        "transcript:trusted-complete id={id} secret_ref={secret_ref}"
+        "{}:trusted-complete host={} id={id} secret_ref={secret_ref}",
+        host.transcript_prefix(),
+        host.label()
     ));
 
     let response = Client::new()
@@ -375,11 +449,18 @@ async fn trusted_input_complete(
         .await
         .context("trusted input complete body decode failed")?;
 
-    redactor.print(&format!("transcript:trusted-complete status={status}"));
-    redactor.print(&format!("transcript:trusted-complete body={json_body}"));
+    redactor.print(&format!(
+        "{}:trusted-complete status={status}",
+        host.transcript_prefix()
+    ));
+    redactor.print(&format!(
+        "{}:trusted-complete body={json_body}",
+        host.transcript_prefix()
+    ));
     println!(
         "RESULT_JSON={}",
         json!({
+            "host": host.label(),
             "status": status,
             "body": {
                 "ok": json_body["ok"],

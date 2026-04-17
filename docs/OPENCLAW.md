@@ -1,43 +1,40 @@
 # OpenClaw Integration
 
-This doc describes the intended broker contract for OpenClaw-like host apps. It does not certify current end-to-end transcript safety.
-Current V3 status for OpenClaw-style HTTP hosts is `preview` in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
+OpenClaw is the first certified external host path in this repo, but only for the documented broker HTTP contract. The host process itself stays untrusted. The certification boundary is the OpenClaw runtime talking to the broker over HTTP with the client key, plus the separate approver channel for approvals.
 
-## What OpenClaw should do
+Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the status source of truth and [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) for the sink and failure-path details.
 
-- Talk only to the broker API.
-- Use the `client` key for runtime requests.
-- Never embed provider credentials in OpenClaw.
-- Never send raw secret values to the broker.
-- Use opaque refs such as `bw://...` only.
-- If OpenClaw wants transcript-safer ingress, it should use the trusted-input session flow and return only the broker `tir://session/<id>` opaque ref to the agent-visible runtime.
-- If the broker returns `raw_secret_rejected`, the host flow is violating the trusted-boundary contract.
-- Stay on the untrusted side of the trust boundary.
+## Trust boundary
 
-## Minimum setup
+- OpenClaw gets the `client` key only.
+- The approver channel keeps the `approver` key and stays outside OpenClaw.
+- OpenClaw may talk to the broker API only.
+- OpenClaw must not talk directly to Bitwarden or any other trusted-side system.
+- Transcript, stdout, stderr, crash logs, and retry logs inside OpenClaw are untrusted sinks.
+- Tool-call payloads and failure payloads inside OpenClaw are untrusted sinks too.
 
-1. Set `SECRET_BROKER_BIND=127.0.0.1:4815` or expose the broker only to trusted hosts.
-2. Configure OpenClaw to call:
-   - `POST /v1/requests`
-   - `GET /v1/requests`
-   - `POST /v1/execute`
-3. Configure your approver channel to call:
-   - `POST /v1/requests/:id/approve`
-   - `POST /v1/requests/:id/deny`
-   - `GET /v1/audit`
-4. Keep provider systems on the trusted side.
+## Data-flow contract
 
-## What this doc does not claim
+1. OpenClaw starts a trusted-input session with `POST /v1/trusted-input/sessions`.
+2. The trusted host-input surface completes the session with `POST /v1/trusted-input/sessions/:id/complete`.
+3. Completion returns only a broker-issued `tir://session/<id>` opaque ref.
+4. OpenClaw submits that opaque ref to `POST /v1/requests` with the client key.
+5. The approver channel reviews the masked payload and calls `POST /v1/requests/:id/approve` or `POST /v1/requests/:id/deny`.
+6. OpenClaw executes only with the approved `id`, `capability_token`, `action`, and `target`.
+7. Broker responses stay masked; adapter execution does not return plaintext secret values.
 
-- It does not claim transcript-safe host behavior.
-- It does not claim secure password entry through chat surfaces.
-- It does not claim a finished trusted-side browser-fill adapter.
-- It does not treat the local node-to-node harness as OpenClaw host certification.
+## What OpenClaw must not do
 
-## Drop-in contract
+- Do not send raw secret values to the broker.
+- Do not keep plaintext secrets in agent-visible transcript surfaces.
+- Do not leak provider credentials into OpenClaw logs or task memory.
+- Do not retry a failed trusted-input completion with a different request context.
+- Do not mutate approved `action` or `target` after approval.
 
-- Agent intent goes in as `secret_ref`, `action`, `target`, and optional `amount_cents`.
-- Broker returns masked metadata, request IDs, and single-use capability tokens at request creation for auto-approved requests or in approval responses for pending ones.
-- Approval responses include a masked review payload with request type, masked secret ref, action, target, and reason.
-- Execution requires the one-time capability token plus the same approved `action` and `target`.
-- Broker API responses do not return plaintext secret values.
+## Evidence
+
+- `bash scripts/run-openclaw-e2e.sh`
+- `bash scripts/check-v3-ship-gate.sh`
+- `cargo test --all-targets --all-features -- --nocapture`
+
+If this evidence goes red, downgrade OpenClaw back to `preview` and remove any shipped claim until the lane is green again.

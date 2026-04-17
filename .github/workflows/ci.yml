@@ -41,6 +41,9 @@ jobs:
       - name: Node-to-node E2E harness
         run: bash scripts/run-e2e-harness.sh
 
+      - name: OpenClaw host E2E evidence
+        run: bash scripts/run-openclaw-e2e.sh
+
       - name: Unit and integration tests
         run: cargo test --all-targets --all-features -- --nocapture
 

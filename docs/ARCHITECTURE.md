@@ -29,7 +29,7 @@
 - Policy output is explainable and can return allow, require-approval, step-up, or deny
 - Supported local paths can bind verified identity into request, approval, and execute context
 - The local supported-host helper path now has a documented transcript/log redaction boundary with a separate trusted control sink for harness-only flow control
-- No current guarantee of universal transcript-safe host behavior beyond the broker-owned trusted-input ingress path, the local helper redaction contract, and the local helper adapter paths listed in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md)
+- No current guarantee of universal transcript-safe host behavior beyond the certified OpenClaw host path, the broker-owned trusted-input ingress path, the local helper redaction contract, and the local helper adapter paths listed in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md)
 
 ## Modes
 
