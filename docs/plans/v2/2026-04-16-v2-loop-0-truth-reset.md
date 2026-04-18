@@ -728,7 +728,7 @@ Expected:
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-04-16-v2-loop-0-truth-reset.md`. Two execution options:
+Plan complete and saved to `docs/plans/v2/2026-04-16-v2-loop-0-truth-reset.md`. Two execution options:
 
 **1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
 

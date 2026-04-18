@@ -8,6 +8,7 @@ This is the human entrypoint for the Secret Broker docs tree.
 - Release and claim authority: [product/RELEASE.md](product/RELEASE.md)
 - Host support matrix: [product/SUPPORTED_HOSTS.md](product/SUPPORTED_HOSTS.md)
 - Platform support matrix: [product/PLATFORM_SUPPORT.md](product/PLATFORM_SUPPORT.md)
+- Backlog index: [backlog/INDEX.md](backlog/INDEX.md)
 
 ## Folders
 
@@ -34,6 +35,8 @@ Execution plans grouped by owning version.
 ### Backlog
 
 Future work grouped by owning version.
+
+- [Backlog index](backlog/INDEX.md)
 
 ### Archive
 
