@@ -2,19 +2,6 @@ use async_trait::async_trait;
 
 use crate::mask_secret_ref;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProviderBridgeMode {
-    Off,
-    Stub,
-}
-
-pub(crate) fn parse_provider_bridge_mode(raw: &str) -> ProviderBridgeMode {
-    match raw.trim().to_lowercase().as_str() {
-        "stub" => ProviderBridgeMode::Stub,
-        _ => ProviderBridgeMode::Off,
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedSecret {
     pub(crate) provider_name: &'static str,
@@ -123,10 +110,7 @@ impl SecretProvider for ProviderRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        parse_provider_bridge_mode, ProviderBridgeMode, ProviderErrorCode, ProviderRuntime,
-        SecretProvider,
-    };
+    use super::{ProviderErrorCode, ProviderRuntime, SecretProvider};
 
     #[tokio::test]
     async fn stub_runtime_resolves_known_bitwarden_ref() {
@@ -153,15 +137,5 @@ mod tests {
 
         assert_eq!(err.code, ProviderErrorCode::Unavailable);
         assert!(!err.message.contains("missing"));
-    }
-
-    #[test]
-    fn provider_mode_parser_handles_off_and_stub() {
-        assert_eq!(parse_provider_bridge_mode("off"), ProviderBridgeMode::Off);
-        assert_eq!(parse_provider_bridge_mode("stub"), ProviderBridgeMode::Stub);
-        assert_eq!(
-            parse_provider_bridge_mode("anything-else"),
-            ProviderBridgeMode::Off
-        );
     }
 }

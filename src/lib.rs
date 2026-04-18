@@ -379,7 +379,7 @@ impl provider::SecretProvider for BitwardenProductionProvider {
                 401 | 403 => "revoked_credential",
                 404 => "missing_ref",
                 409 => "binding_mismatch",
-                502 | 503 | 504 => "provider_outage",
+                502..=504 => "provider_outage",
                 _ => "provider_unavailable",
             };
             return Err(provider::ProviderError {

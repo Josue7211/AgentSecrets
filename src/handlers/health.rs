@@ -1,8 +1,8 @@
 use axum::{extract::State, http::StatusCode, Json};
 use serde_json::{json, Value};
 
+use crate::adapter::TrustedExecutionAdapter;
 use crate::AppState;
-use crate::{adapter::TrustedExecutionAdapter, provider::SecretProvider};
 
 pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
     let provider = state.provider.health().await;
