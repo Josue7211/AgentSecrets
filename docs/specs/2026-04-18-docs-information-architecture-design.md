@@ -58,8 +58,11 @@ Current root docs are flat:
 
 Current planning artifacts live under:
 
-- `docs/superpowers/plans/`
-- `docs/superpowers/specs/`
+- `docs/plans/v2/`
+- `docs/plans/v3/`
+- `docs/plans/v4/`
+- `docs/plans/v5/`
+- `docs/specs/`
 
 ## Target Information Architecture
 
@@ -255,8 +258,8 @@ Move current root docs into their owned folders without renaming unless needed.
 
 ### Phase 4: Move Planning Artifacts
 
-- move `docs/superpowers/plans/*` into version-owned `docs/plans/`
-- move `docs/superpowers/specs/*` into `docs/specs/`
+- move `docs/plans/v2/*`, `docs/plans/v3/*`, `docs/plans/v4/*`, and `docs/plans/v5/*` into version-owned folders
+- keep strategic design companions in `docs/specs/`
 - decide case by case whether completed bridge artifacts stay in plans or move to archive
 
 ### Phase 5: Seed Backlog Structure
