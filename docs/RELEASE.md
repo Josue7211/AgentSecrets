@@ -16,6 +16,7 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Run `bash scripts/check-v4-ship-gate.sh`
 - Run `bash scripts/run-rotation-recovery-drills.sh`
 - Run `bash scripts/run-adversarial-suite.sh pr`
+- Confirm [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md) matches the runtime identity tier actually configured for release
 - Confirm `docs/SECURITY_GUARANTEES.md` matches the current implementation line
 - Confirm docs distinguish broker-level guarantees from end-to-end host guarantees
 - Treat a failing or skipped Loop 5 harness run as a V2 release blocker
@@ -145,7 +146,7 @@ Call V4 real only when every Loop 0 through Loop 5 line below is backed by curre
 | Loop | Required line | Required evidence |
 | --- | --- | --- |
 | Loop 0 | policy decisions are explainable across action, target, actor, environment, and risk | `cargo test policy_engine_marks_public_request_sign_as_step_up_with_explanation -- --nocapture` |
-| Loop 1 | supported local identity paths verify runtime, host, and adapter identity and fail closed on mismatch | `cargo test approval_payload_includes_verified_identity_summary -- --nocapture`, `cargo test execute_rejects_identity_mismatch_after_approval -- --nocapture` |
+| Loop 1 | local helper stub identity and preview OpenClaw host-signed identity both fail closed on mismatch or downgrade | `cargo test approval_payload_includes_verified_identity_summary -- --nocapture`, `cargo test execute_rejects_identity_mismatch_after_approval -- --nocapture`, `cargo test create_request_rejects_replayed_host_signed_identity_envelope -- --nocapture` |
 | Loop 2 | audit-chain verification and forensic export remain green and redact-safe | `cargo test audit_chain_verification_detects_tampering -- --nocapture`, `cargo test forensic_bundle_export_is_redact_safe_and_tamper_evident -- --nocapture` |
 | Loop 3 | rotation and recovery drills remain repeatable and evidence-backed | `bash scripts/run-rotation-recovery-drills.sh` |
 | Loop 4 | PR-safe adversarial checks remain green and extended checks are defined for schedule use | `bash scripts/run-adversarial-suite.sh pr` |
@@ -164,6 +165,7 @@ V4 release authority is the combination of:
 | --- | --- | --- | --- |
 | Broker policy decisions now explain action, target, actor, environment, and risk | allowed | policy tests plus full suite | Broker-owned policy claim only |
 | Local helper paths can verify runtime, host, and adapter identity in stub mode | allowed | identity tests | Local stub-attestation path only |
+| OpenClaw preview paths can require host-specific signed identity with replay and downgrade protection | allowed | host-signed identity tests | Keep OpenClaw preview until the host matrix promotes it; do not turn this into a blanket external-runtime trust claim |
 | Operators can verify audit-chain integrity and export redact-safe forensic bundles | allowed | forensic tests | Local SQLite evidence path only |
 | Rotation/recovery discipline and adversarial verification are part of release gating | allowed | drill script plus adversarial suite | Claim strength depends on current evidence |
 | External runtimes now have shipped V4 identity or platform trust | blocked | none in this repo | Keep external runtimes preview or unsupported |
@@ -172,6 +174,7 @@ V4 release authority is the combination of:
 
 - Platform support review signoff:
   - confirm [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) matches current evidence
+  - confirm [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md) matches the configured identity tier and host requirements
   - confirm shipped, preview, deprecated, and unsupported statements are still truthful
 - Continuous evidence review signoff:
   - confirm adversarial PR lane is green

@@ -260,6 +260,9 @@ mod tests {
             identity_attestation_max_age_seconds: 300,
             trusted_runtime_ids: Vec::new(),
             trusted_host_ids: Vec::new(),
+            identity_host_signing_keys: std::collections::HashMap::new(),
+            trusted_host_runtime_pairs: std::collections::HashMap::new(),
+            required_host_identity_modes: std::collections::HashMap::new(),
         }
     }
 

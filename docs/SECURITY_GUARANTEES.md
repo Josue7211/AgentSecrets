@@ -24,6 +24,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - The local supported-host helper path has sanctioned adapter-path coverage for `password_fill`, `request_sign`, and `credential_handoff`.
 - Policy decisions now account for actor, environment, and risk in addition to action and target.
 - Supported local identity paths can verify runtime, host, and adapter claims in stub attestation mode.
+- The documented OpenClaw host path can now use host-specific signed identity envelopes with replay rejection and host/runtime binding checks.
 - Operators can verify audit-chain integrity and export redact-safe forensic bundles.
 - The repo now includes repeatable rotation/recovery drills and adversarial verification lanes.
 
@@ -43,7 +44,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Production Bitwarden mediation implemented in this repo.
 - End-to-end node-to-node verification across real host integrations.
 - Supported-host certification for Claude, Codex, or arbitrary external runtime.
-- Strong V4 identity claims for external runtimes beyond the local stub attestation path.
+- Strong V4 identity claims for arbitrary external runtimes beyond the documented OpenClaw host-signed preview path.
 
 ## Supported trust claim in the current repo state
 
@@ -51,6 +52,7 @@ AgentSecrets currently provides broker-level no-plaintext-response guarantees. I
 For supported hosts that use the trusted-input session flow, the repo now also provides a narrow ingress contract where the agent-visible path only handles broker-issued opaque refs.
 For the local supported-host helper path exercised by the harness, the repo also provides a narrow redaction contract for untrusted transcript and log sinks plus sanctioned adapter-path coverage.
 For the preview OpenClaw host path, the repo now also provides host-specific evidence for trusted-input ingress, transcript/log redaction, approval masking, and adapter execution without plaintext leakage.
+For that same preview OpenClaw path, the broker can now require `host-signed` runtime identity with host-specific keys, one-time attestation envelopes, and host/runtime pair checks.
 Those claims do not automatically extend to external host apps.
 Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only host-certification authority for V3 claims.
 Use [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) as the only V4 control and claim authority.

@@ -13,7 +13,7 @@ use crate::{
     audit::append_audit,
     auth::{enforce_rate_limit, require_approver, require_client_or_approver},
     capability_token, err,
-    identity::{verify_headers, IdentityExpectations, IdentitySummary},
+    identity::{approval_identity_guard, verify_headers, IdentityExpectations, IdentitySummary},
     mask_secret_ref, now_unix, ok, request_id, token_hash, unix_to_sqlite_datetime, ApiError,
     ApiResponse, AppState, ApproveLookupRow, AuditQuery, AuditRow, CreateRequestBody, DecisionBody,
     ListQuery, RequestRow, RequestView,
@@ -160,6 +160,7 @@ pub(crate) async fn create_request(
         &headers,
         IdentityExpectations { action },
         now_unix(),
+        &state.identity_replay_cache,
     ) {
         Ok(identity) => identity,
         Err(identity_err) => {
@@ -621,6 +622,22 @@ pub(crate) async fn approve_request(
         identity_adapter_id,
         identity_verified_at,
     );
+    if let Err(identity_err) = approval_identity_guard(&state.cfg, identity.as_ref()) {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.approve_rejected",
+            Some(&id),
+            &json!({ "reason": identity_err.code }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            identity_err.code,
+            identity_err.message,
+        ));
+    }
 
     let issued = issue_capability(&state)?;
 

@@ -7,6 +7,7 @@ use crate::{adapter::TrustedExecutionAdapter, provider::SecretProvider};
 pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
     let provider = state.provider.health().await;
     let adapter = state.adapter.health().await;
+    let identity = crate::identity::health(&state.cfg);
 
     Json(json!({
         "ok": true,
@@ -18,7 +19,14 @@ pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
         },
         "provider": provider,
         "adapter": adapter,
-        "identity": crate::identity::health(&state.cfg),
+        "identity": {
+            "mode": identity.mode,
+            "configured": identity.configured,
+            "ready": identity.ready,
+            "max_age_seconds": identity.max_age_seconds,
+            "host_signed_hosts": state.cfg.identity_host_signing_keys.len(),
+            "required_host_modes": state.cfg.required_host_identity_modes.len(),
+        },
     }))
 }
 

@@ -10,7 +10,7 @@ use crate::{
     audit::append_audit,
     auth::{enforce_rate_limit, require_client_or_approver},
     err,
-    identity::{verify_headers, IdentityExpectations, IdentitySummary},
+    identity::{execute_identity_guard, verify_headers, IdentityExpectations, IdentitySummary},
     now_unix, ok,
     provider::SecretProvider,
     sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState, ExecuteBody,
@@ -139,6 +139,7 @@ pub(crate) async fn execute_request(
             action: expected_action,
         },
         now_unix(),
+        &state.identity_replay_cache,
     ) {
         Ok(identity) => identity,
         Err(identity_err) => {
@@ -315,28 +316,25 @@ pub(crate) async fn execute_request(
         ));
     }
 
-    if let (Some(stored_identity), Some(current_identity)) =
-        (stored_identity.as_ref(), current_identity.as_ref())
-    {
-        if stored_identity.runtime_id != current_identity.runtime_id
-            || stored_identity.host_id != current_identity.host_id
-            || stored_identity.adapter_id != current_identity.adapter_id
-        {
-            let _ = append_audit(
-                &state.db,
-                &auth_ctx.key_fingerprint,
-                "request.execute_rejected",
-                Some(&body.id),
-                &json!({ "reason": "identity_mismatch" }),
-            )
-            .await;
+    if let Err(identity_err) = execute_identity_guard(
+        &state.cfg,
+        stored_identity.as_ref(),
+        current_identity.as_ref(),
+    ) {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.execute_rejected",
+            Some(&body.id),
+            &json!({ "reason": identity_err.code }),
+        )
+        .await;
 
-            return Err(err(
-                StatusCode::FORBIDDEN,
-                "identity_mismatch",
-                "Verified identity mismatch",
-            ));
-        }
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            identity_err.code,
+            identity_err.message,
+        ));
     }
 
     let Some(exp_unix) = sqlite_datetime_to_unix(expires) else {
