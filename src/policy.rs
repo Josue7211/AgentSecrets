@@ -262,7 +262,6 @@ mod tests {
             trusted_host_ids: Vec::new(),
             identity_host_signing_keys: std::collections::HashMap::new(),
             trusted_host_runtime_pairs: std::collections::HashMap::new(),
-            required_host_identity_modes: std::collections::HashMap::new(),
         }
     }
 

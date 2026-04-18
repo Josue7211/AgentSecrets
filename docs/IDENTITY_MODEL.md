@@ -35,7 +35,6 @@ This document defines the runtime identity tiers used by the broker. It exists t
 - Approval checks tier-lock the stored verified identity tier to the current deployment baseline.
 - Execute checks require the current request identity to stay at least as strong as the stored approved tier and to match runtime, host, and adapter claims.
 - Current replay scope is process-local to the running broker instance. Restarting the broker clears that cache.
-- Stronger per-host tiers above the deployment baseline are not supported. Startup fails if `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` asks for a stronger tier than `SECRET_BROKER_IDENTITY_VERIFICATION_MODE`.
 
 ## Current host mapping
 
@@ -60,5 +59,4 @@ All non-`off` tiers use:
 
 - Do not use `stub` evidence to certify an external host.
 - Do not use `host-signed` as a blanket claim for all external runtimes.
-- Do not describe `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` as a way to escalate trust above the deployment baseline.
 - Do not claim `hardware-backed` until there is real attestation plumbing and verification evidence in this repo.

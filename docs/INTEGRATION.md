@@ -105,7 +105,6 @@ Treat any OpenClaw-like host app as an untrusted runtime unless it is the docume
 - If the host also claims transcript or log redaction, define sink classification and fail-closed behavior explicitly. Use [docs/REDACTION_POLICY.md](docs/REDACTION_POLICY.md) as the current repo-owned example and [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) for the documented OpenClaw sink model.
 - If `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub`, hosts on the baseline path must attach signed identity headers for runtime, host, adapter, timestamp, and signature.
 - If `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed`, hosts on that deployment baseline must also send `x-secret-broker-attestation-id` and must be signed with the configured host-specific key.
-- Do not rely on `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` to escalate a host above the deployment baseline. Startup now rejects that shape.
 - Host-signed envelope replay rejection is currently same-process only. Do not treat it as durable across broker restart.
 - Do not claim transcript safety beyond the tested path unless an end-to-end test proves it for that host.
 - Keep trusted-side provider placement and trusted execution adapter placement beside the broker, not inside the host runtime.

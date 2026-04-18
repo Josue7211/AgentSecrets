@@ -102,7 +102,6 @@ Optional:
 - `SECRET_BROKER_TRUSTED_HOST_IDS`
 - `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=<host>=<key>,...`
 - `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
-- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=<host>=<mode>,...`
 
 Recommended host-signed preview-host deployment:
 - `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed`
@@ -115,7 +114,6 @@ Replay note:
 Identity startup note:
 - `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub` now fails startup unless `SECRET_BROKER_IDENTITY_ATTESTATION_KEY` is set.
 - `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed` now fails startup unless at least one host appears in both `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS` and `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS`.
-- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` cannot request a stronger tier than the global baseline.
 - `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=hardware-backed` currently fails startup because that tier is not implemented.
 
 `enforce` mode startup validations:

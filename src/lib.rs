@@ -62,7 +62,6 @@ struct Config {
     trusted_host_ids: Vec<String>,
     identity_host_signing_keys: HashMap<String, String>,
     trusted_host_runtime_pairs: HashMap<String, Vec<String>>,
-    required_host_identity_modes: HashMap<String, identity::IdentityVerificationMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -342,22 +341,6 @@ fn parse_host_runtime_pairs(raw: &str) -> anyhow::Result<HashMap<String, Vec<Str
         .collect()
 }
 
-fn parse_required_host_identity_modes(
-    raw: &str,
-) -> anyhow::Result<HashMap<String, identity::IdentityVerificationMode>> {
-    parse_kv_map(raw, "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES")?
-        .into_iter()
-        .map(|(host_id, mode)| {
-            let mode = identity::parse_identity_verification_mode(&mode).map_err(|_| {
-                anyhow::anyhow!(
-                    "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES contains an invalid mode for {host_id}"
-                )
-            })?;
-            Ok((host_id, mode))
-        })
-        .collect()
-}
-
 fn config_from_env() -> anyhow::Result<Config> {
     let bind = std::env::var("SECRET_BROKER_BIND").unwrap_or_else(|_| "127.0.0.1:4815".to_string());
     let db_url = std::env::var("SECRET_BROKER_DB")
@@ -432,9 +415,6 @@ fn config_from_env() -> anyhow::Result<Config> {
     let trusted_host_runtime_pairs = parse_host_runtime_pairs(
         &std::env::var("SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS").unwrap_or_default(),
     )?;
-    let required_host_identity_modes = parse_required_host_identity_modes(
-        &std::env::var("SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES").unwrap_or_default(),
-    )?;
 
     Ok(Config {
         bind,
@@ -456,7 +436,6 @@ fn config_from_env() -> anyhow::Result<Config> {
         trusted_host_ids,
         identity_host_signing_keys,
         trusted_host_runtime_pairs,
-        required_host_identity_modes,
     })
 }
 
@@ -530,14 +509,6 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
         }
     }
 
-    if !cfg.required_host_identity_modes.is_empty()
-        && cfg.identity_verification_mode == identity::IdentityVerificationMode::Off
-    {
-        anyhow::bail!(
-            "required host identity modes need a non-off SECRET_BROKER_IDENTITY_VERIFICATION_MODE baseline"
-        );
-    }
-
     match cfg.identity_verification_mode {
         identity::IdentityVerificationMode::Off => {}
         identity::IdentityVerificationMode::Stub => {
@@ -553,41 +524,9 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
                     "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires at least one host present in both SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS and SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS"
                 );
             }
-            if cfg.identity_attestation_key.is_empty() {
-                anyhow::bail!(
-                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires SECRET_BROKER_IDENTITY_ATTESTATION_KEY"
-                );
-            }
         }
         identity::IdentityVerificationMode::HardwareBacked => {
             anyhow::bail!("hardware-backed identity is not implemented")
-        }
-    }
-
-    for (host_id, required_mode) in &cfg.required_host_identity_modes {
-        if required_mode.strength_rank() > cfg.identity_verification_mode.strength_rank() {
-            anyhow::bail!(
-                "required host identity mode for {host_id} cannot exceed SECRET_BROKER_IDENTITY_VERIFICATION_MODE"
-            );
-        }
-        match required_mode {
-            identity::IdentityVerificationMode::Off => {}
-            identity::IdentityVerificationMode::Stub => {}
-            identity::IdentityVerificationMode::HostSigned => {
-                if !cfg.identity_host_signing_keys.contains_key(host_id) {
-                    anyhow::bail!(
-                        "host-signed identity for {host_id} requires SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS"
-                    );
-                }
-                if !cfg.trusted_host_runtime_pairs.contains_key(host_id) {
-                    anyhow::bail!(
-                        "host-signed identity for {host_id} requires SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS"
-                    );
-                }
-            }
-            identity::IdentityVerificationMode::HardwareBacked => {
-                anyhow::bail!("hardware-backed identity is not implemented")
-            }
         }
     }
 
@@ -691,7 +630,6 @@ mod tests {
             trusted_host_ids: Vec::new(),
             identity_host_signing_keys: HashMap::new(),
             trusted_host_runtime_pairs: HashMap::new(),
-            required_host_identity_modes: HashMap::new(),
         })
     }
 
@@ -787,30 +725,25 @@ mod tests {
         identity_mode: crate::identity::IdentityVerificationMode,
     ) -> anyhow::Result<(Router, Arc<Config>)> {
         let (app, cfg) = setup_app_with_modes(provider_bridge_mode, adapter_mode).await?;
-        let (identity_host_signing_keys, trusted_host_runtime_pairs, required_host_identity_modes) =
-            match identity_mode {
-                crate::identity::IdentityVerificationMode::HostSigned => (
-                    HashMap::from([
-                        (
-                            "openclaw-http-host".to_string(),
-                            "openclaw-host-signing-key".to_string(),
-                        ),
-                        (
-                            "unused-key-only-host".to_string(),
-                            "unused-host-key".to_string(),
-                        ),
-                    ]),
-                    HashMap::from([(
+        let (identity_host_signing_keys, trusted_host_runtime_pairs) = match identity_mode {
+            crate::identity::IdentityVerificationMode::HostSigned => (
+                HashMap::from([
+                    (
                         "openclaw-http-host".to_string(),
-                        vec!["openclaw-runtime-v1".to_string()],
-                    )]),
-                    HashMap::from([(
-                        "openclaw-http-host".to_string(),
-                        crate::identity::IdentityVerificationMode::HostSigned,
-                    )]),
-                ),
-                _ => (HashMap::new(), HashMap::new(), HashMap::new()),
-            };
+                        "openclaw-host-signing-key".to_string(),
+                    ),
+                    (
+                        "unused-key-only-host".to_string(),
+                        "unused-host-key".to_string(),
+                    ),
+                ]),
+                HashMap::from([(
+                    "openclaw-http-host".to_string(),
+                    vec!["openclaw-runtime-v1".to_string()],
+                )]),
+            ),
+            _ => (HashMap::new(), HashMap::new()),
+        };
         let cfg = Arc::new(Config {
             identity_verification_mode: identity_mode,
             identity_attestation_key: "loop4-attestation-key".to_string(),
@@ -826,7 +759,6 @@ mod tests {
             ],
             identity_host_signing_keys,
             trusted_host_runtime_pairs,
-            required_host_identity_modes,
             ..(*cfg).clone()
         });
         validate_config(&cfg)?;
@@ -913,7 +845,7 @@ mod tests {
         envelope_id: &str,
     ) -> Vec<(&'static str, String)> {
         let adapter_id = crate::identity::adapter_id_for_action(action).to_string();
-        let signature = match crate::identity::configured_mode_for_host(cfg, Some(host_id)) {
+        let signature = match crate::identity::configured_mode(cfg) {
             crate::identity::IdentityVerificationMode::HostSigned => {
                 let host_key = cfg
                     .identity_host_signing_keys
@@ -2878,14 +2810,6 @@ mod tests {
         let body = json_response(resp).await;
         assert_eq!(body["identity"]["baseline_mode"], "host-signed");
         assert_eq!(
-            body["identity"]["required_host_modes"]["openclaw-http-host"],
-            "host-signed"
-        );
-        assert_eq!(
-            body["identity"]["effective_host_modes"]["openclaw-http-host"],
-            "host-signed"
-        );
-        assert_eq!(
             body["identity"]["host_signed_hosts"]
                 .as_array()
                 .unwrap()
@@ -2912,18 +2836,6 @@ mod tests {
     }
 
     #[test]
-    fn config_from_env_rejects_invalid_required_host_identity_mode() {
-        let result = with_env_vars(
-            &[(
-                "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES",
-                Some("openclaw-http-host=typo-mode"),
-            )],
-            config_from_env,
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn validate_config_rejects_global_host_signed_without_host_config() {
         let result = with_env_vars(
             &[(
@@ -2933,6 +2845,29 @@ mod tests {
             || config_from_env().and_then(|cfg| validate_config(&cfg)),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_config_accepts_host_signed_without_attestation_key() {
+        let result = with_env_vars(
+            &[
+                (
+                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE",
+                    Some("host-signed"),
+                ),
+                ("SECRET_BROKER_IDENTITY_ATTESTATION_KEY", None),
+                (
+                    "SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS",
+                    Some("openclaw-http-host=openclaw-host-signing-key"),
+                ),
+                (
+                    "SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS",
+                    Some("openclaw-http-host=openclaw-runtime-v1"),
+                ),
+            ],
+            || config_from_env().and_then(|cfg| validate_config(&cfg)),
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -2953,33 +2888,6 @@ mod tests {
             &[
                 ("SECRET_BROKER_IDENTITY_VERIFICATION_MODE", Some("stub")),
                 ("SECRET_BROKER_IDENTITY_ATTESTATION_KEY", None),
-            ],
-            || config_from_env().and_then(|cfg| validate_config(&cfg)),
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn validate_config_rejects_required_host_mode_stronger_than_baseline() {
-        let result = with_env_vars(
-            &[
-                ("SECRET_BROKER_IDENTITY_VERIFICATION_MODE", Some("stub")),
-                (
-                    "SECRET_BROKER_IDENTITY_ATTESTATION_KEY",
-                    Some("loop4-attestation-key"),
-                ),
-                (
-                    "SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS",
-                    Some("openclaw-http-host=openclaw-host-signing-key"),
-                ),
-                (
-                    "SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS",
-                    Some("openclaw-http-host=openclaw-runtime-v1"),
-                ),
-                (
-                    "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES",
-                    Some("openclaw-http-host=host-signed"),
-                ),
             ],
             || config_from_env().and_then(|cfg| validate_config(&cfg)),
         );
@@ -3347,7 +3255,6 @@ mod tests {
         let downgraded_cfg = Arc::new(Config {
             db_url: cfg.db_url.clone(),
             identity_verification_mode: crate::identity::IdentityVerificationMode::Stub,
-            required_host_identity_modes: HashMap::new(),
             ..(*cfg).clone()
         });
         let pool = connect_sqlite(&downgraded_cfg.db_url).await?;
@@ -3381,7 +3288,7 @@ mod tests {
         let approve_resp = downgraded_app.clone().oneshot(approve_req).await?;
         assert_eq!(approve_resp.status(), StatusCode::FORBIDDEN);
         let body = json_response(approve_resp).await;
-        assert_eq!(body["code"], "identity_downgraded");
+        assert_eq!(body["code"], "identity_tier_changed");
         Ok(())
     }
 

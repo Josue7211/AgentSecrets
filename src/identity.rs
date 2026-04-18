@@ -149,10 +149,7 @@ pub(crate) fn usable_host_signed_hosts(cfg: &Config) -> Vec<String> {
     hosts
 }
 
-pub(crate) fn configured_mode_for_host(
-    cfg: &Config,
-    _host_id: Option<&str>,
-) -> IdentityVerificationMode {
+pub(crate) fn configured_mode(cfg: &Config) -> IdentityVerificationMode {
     cfg.identity_verification_mode
 }
 
@@ -436,13 +433,7 @@ pub(crate) fn verify_headers(
     now_unix: i64,
     replay_cache: &IdentityReplayCache,
 ) -> Result<Option<IdentitySummary>, IdentityError> {
-    let claimed_host = headers
-        .get(HDR_HOST_ID)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-
-    match configured_mode_for_host(cfg, claimed_host) {
+    match configured_mode(cfg) {
         IdentityVerificationMode::Off => Ok(None),
         IdentityVerificationMode::Stub => verify_stub_headers(cfg, headers, expected, now_unix),
         IdentityVerificationMode::HostSigned => {
@@ -476,11 +467,11 @@ pub(crate) fn approval_identity_tier_lock(
             code: "invalid_identity",
             message: "Stored request identity mode is invalid",
         })?;
-    let required_mode = configured_mode_for_host(cfg, Some(&identity.host_id));
+    let required_mode = configured_mode(cfg);
 
     if stored_mode.strength_rank() != required_mode.strength_rank() {
         return Err(IdentityError {
-            code: "identity_downgraded",
+            code: "identity_tier_changed",
             message: "Stored request identity tier no longer matches the required trust tier",
         });
     }
