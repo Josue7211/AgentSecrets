@@ -18,6 +18,17 @@ The current repo guarantees broker-level masked responses and a broker-owned tru
 The local node-to-node harness now covers both the stubbed broker request flow and the trusted-input ingress path. The helper used in that harness also has tested transcript and log redaction coverage for seeded canaries and provider refs. That evidence is still not the same thing as supported-host certification.
 Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) to decide which hosts are actually release-eligible for V3 end-to-end claims.
 
+## Provider mediation contract
+
+Provider mediation stays on the trusted side of the broker boundary.
+
+- The only shipped production provider mode in this repo is `SECRET_BROKER_PROVIDER_BRIDGE_MODE=bitwarden-production`.
+- Host-visible flows still send only opaque refs such as `bw://vault/item/login` or `tir://session/<id>`.
+- The broker may resolve a `bw://...` ref into secret bytes internally, but it must not send those bytes, provider credentials, or provider access tokens back into the host-visible request path.
+- Host-visible responses may include masked provider metadata and masked refs, not plaintext secret values.
+- Failure cases such as outage, revoked credential, missing ref, or vault/item binding mismatch must fail closed and remain auditable on the broker side.
+- Trusted-input completion still returns only the broker-owned `tir://session/<id>` ref; it does not turn provider mediation into a plaintext ingress path.
+
 ## Supported V2 topology
 
 The supported V2 topology is narrow and should remain that way at release time:
@@ -43,6 +54,7 @@ V4 operators must also review [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.m
 - Treat `raw_secret_rejected` as a hard integration error that must be fixed in the caller.
 - Do not put plaintext passwords into prompts, chat boxes, or task memory.
 - Do not expect provider credentials or plaintext provider results from the broker.
+- Do not let the host runtime act as a provider client.
 - Treat `provider_unavailable` and `provider_unsupported` as broker contract failures, not as permission to bypass the broker.
 
 ## Trusted input session contract

@@ -10,6 +10,7 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Run `bash scripts/check-security-claims.sh`
 - Run `bash scripts/run-e2e-harness.sh`
 - Run `bash scripts/run-openclaw-e2e.sh`
+- Run `bash scripts/run-provider-mediation-e2e.sh`
 - Run `bash scripts/check-v2-ship-gate.sh`
 - Run `bash scripts/check-v3-ship-gate.sh`
 - Run `bash scripts/check-external-host-ship-gate.sh`
@@ -83,6 +84,7 @@ The gate is the release truth for [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS
 | Broker API with opaque refs, masked responses, role separation, and one-time capabilities | shipped | Supported V2 contract |
 | Human approval flow with masked review payload and action/target binding | shipped | Supported V2 contract |
 | Stub trusted-side provider bridge behind `SECRET_BROKER_PROVIDER_BRIDGE_MODE=stub` | preview | Contract validation only, not production Bitwarden mediation |
+| Bitwarden production provider mediation behind `SECRET_BROKER_PROVIDER_BRIDGE_MODE=bitwarden-production` | shipped | `bash scripts/run-provider-mediation-e2e.sh` |
 | Stub trusted execution adapter paths behind `SECRET_BROKER_EXECUTION_ADAPTER_MODE=stub` | preview | Contract validation only, not real browser or host execution; `password_fill` and `credential_handoff` remain preview-only |
 | Bounded `request_sign` production adapter behind `SECRET_BROKER_EXECUTION_ADAPTER_MODE=request-sign-production` | shipped | `bash scripts/run-adapter-e2e.sh` | Request signing only; requires `SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL`; no browser automation |
 | Local node-to-node harness artifacts under `target/e2e-artifacts/` | shipped | Required release evidence for the stubbed V2 path |
@@ -99,7 +101,7 @@ Use this table verbatim or keep release notes materially equivalent.
 | Approval and execute flows are bound to request id, action, and target | allowed | `cargo test --all-targets --all-features -- --nocapture` | Token is one-time and expires |
 | Stubbed V2 broker, approver, and untrusted client flow are defended at the local process boundary | allowed | `bash scripts/run-e2e-harness.sh` | This is not supported-host certification |
 | Transcript-safe host integrations exist | blocked | none in this repo | Remove this line from V2 release notes |
-| Real browser-fill, signing, or production provider mediation ships in V2 | blocked | none in this repo | Remove this line from V2 release notes |
+| Real browser-fill or non-Bitwarden provider mediation ships in V2 | blocked | none in this repo | Remove this line from V2 release notes |
 
 ## V3 release-note claims table
 
@@ -111,7 +113,7 @@ Use this table verbatim or keep release notes materially equivalent.
 | The local helper harness path supports masked `password_fill`, `request_sign`, and `credential_handoff` flows without exposing plaintext to helper transcripts or artifacts | allowed | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; `request_sign` uses the bounded production adapter mode while `password_fill` and `credential_handoff` remain preview-only |
 | OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | blocked | `bash scripts/run-openclaw-e2e.sh`, `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` | Keep OpenClaw preview until Task 2 adds host-specific identity evidence |
 | Claude, Codex, or arbitrary external runtimes are certified transcript-safe V3 hosts | blocked | none in this repo | Remove this line from V3 release notes |
-| Production browser automation or production provider mediation ships in V3 | blocked | none in this repo | Keep adapter claims at the documented helper-path contract |
+| Production browser automation or non-Bitwarden provider mediation ships in V3 | blocked | none in this repo | Keep adapter claims at the documented helper-path contract |
 
 ## Manual signoff
 

@@ -28,7 +28,7 @@ use tokio::sync::Mutex;
 struct AppState {
     db: Arc<SqlitePool>,
     cfg: Arc<Config>,
-    provider: Arc<provider::ProviderRuntime>,
+    provider: Arc<dyn provider::SecretProvider>,
     adapter: Arc<adapter::ExecutionAdapterRuntime>,
     rate_state: Arc<Mutex<HashMap<String, Vec<i64>>>>,
     identity_replay_cache: identity::IdentityReplayCache,
@@ -41,12 +41,19 @@ enum BrokerMode {
     Enforce,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProviderBridgeMode {
+    Off,
+    Stub,
+    BitwardenProduction,
+}
+
 #[derive(Clone)]
 struct Config {
     bind: String,
     db_url: String,
     mode: BrokerMode,
-    provider_bridge_mode: provider::ProviderBridgeMode,
+    provider_bridge_mode: ProviderBridgeMode,
     execution_adapter_mode: adapter::ExecutionAdapterMode,
     request_sign_adapter_url: String,
     client_api_key: String,
@@ -276,6 +283,154 @@ fn execution_adapter_runtime(cfg: &Config) -> Arc<adapter::ExecutionAdapterRunti
     })
 }
 
+fn parse_provider_bridge_mode(raw: &str) -> anyhow::Result<ProviderBridgeMode> {
+    match raw.trim().to_lowercase().as_str() {
+        "off" => Ok(ProviderBridgeMode::Off),
+        "stub" => Ok(ProviderBridgeMode::Stub),
+        "bitwarden-production" => Ok(ProviderBridgeMode::BitwardenProduction),
+        other => anyhow::bail!("SECRET_BROKER_PROVIDER_BRIDGE_MODE is invalid: {other}"),
+    }
+}
+
+fn provider_runtime_for_config(cfg: &Config) -> Arc<dyn provider::SecretProvider> {
+    match cfg.provider_bridge_mode {
+        ProviderBridgeMode::Off => Arc::new(provider::ProviderRuntime::off()),
+        ProviderBridgeMode::Stub => Arc::new(provider::ProviderRuntime::stub()),
+        ProviderBridgeMode::BitwardenProduction => {
+            Arc::new(BitwardenProductionProvider::from_env())
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BitwardenProductionProvider {
+    endpoint: String,
+    credential: String,
+    client: reqwest::Client,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BitwardenResolveRequest<'a> {
+    secret_ref: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct BitwardenResolveResponse {
+    provider_name: Option<String>,
+    secret_ref_masked: String,
+    secret_hex: String,
+}
+
+impl BitwardenProductionProvider {
+    fn from_env() -> Self {
+        Self {
+            endpoint: std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_URL").unwrap_or_default(),
+            credential: std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_TOKEN").unwrap_or_default(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn new(endpoint: String, credential: String) -> Self {
+        Self {
+            endpoint,
+            credential,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    fn configured(&self) -> bool {
+        (self.endpoint.starts_with("http://") || self.endpoint.starts_with("https://"))
+            && !self.credential.trim().is_empty()
+    }
+}
+
+#[async_trait::async_trait]
+impl provider::SecretProvider for BitwardenProductionProvider {
+    async fn resolve_for_use(
+        &self,
+        secret_ref: &str,
+    ) -> Result<provider::ResolvedSecret, provider::ProviderError> {
+        if !self.configured() {
+            return Err(provider::ProviderError {
+                code: provider::ProviderErrorCode::Unavailable,
+                message: "provider_unavailable",
+            });
+        }
+
+        let response = self
+            .client
+            .post(&self.endpoint)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.credential),
+            )
+            .json(&BitwardenResolveRequest { secret_ref })
+            .send()
+            .await
+            .map_err(|_| provider::ProviderError {
+                code: provider::ProviderErrorCode::Unavailable,
+                message: "provider_outage",
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = match status.as_u16() {
+                401 | 403 => "revoked_credential",
+                404 => "missing_ref",
+                409 => "binding_mismatch",
+                502 | 503 | 504 => "provider_outage",
+                _ => "provider_unavailable",
+            };
+            return Err(provider::ProviderError {
+                code: provider::ProviderErrorCode::Unavailable,
+                message,
+            });
+        }
+
+        let body = response
+            .json::<BitwardenResolveResponse>()
+            .await
+            .map_err(|_| provider::ProviderError {
+                code: provider::ProviderErrorCode::Unavailable,
+                message: "provider_unavailable",
+            })?;
+
+        let secret_bytes =
+            hex::decode(body.secret_hex.as_bytes()).map_err(|_| provider::ProviderError {
+                code: provider::ProviderErrorCode::Unavailable,
+                message: "provider_unavailable",
+            })?;
+
+        if body.secret_ref_masked.trim().is_empty() {
+            return Err(provider::ProviderError {
+                code: provider::ProviderErrorCode::Unavailable,
+                message: "provider_unavailable",
+            });
+        }
+
+        let _provider_name = body
+            .provider_name
+            .unwrap_or_else(|| "bitwarden_production_v1".to_string());
+
+        Ok(provider::ResolvedSecret {
+            provider_name: "bitwarden_production_v1",
+            secret_ref_masked: body.secret_ref_masked,
+            secret_bytes,
+        })
+    }
+
+    async fn health(&self) -> provider::ProviderHealth {
+        let configured = self.configured();
+        provider::ProviderHealth {
+            mode: "bitwarden-production",
+            provider: "bitwarden_production_v1",
+            configured,
+            ready: configured,
+        }
+    }
+}
+
 fn token_hash(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
@@ -366,9 +521,9 @@ fn config_from_env() -> anyhow::Result<Config> {
     let mode = policy::parse_mode(
         &std::env::var("SECRET_BROKER_MODE").unwrap_or_else(|_| "monitor".to_string()),
     );
-    let provider_bridge_mode = provider::parse_provider_bridge_mode(
+    let provider_bridge_mode = parse_provider_bridge_mode(
         &std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_MODE").unwrap_or_else(|_| "off".to_string()),
-    );
+    )?;
     let execution_adapter_mode = adapter::parse_execution_adapter_mode(
         &std::env::var("SECRET_BROKER_EXECUTION_ADAPTER_MODE")
             .unwrap_or_else(|_| "off".to_string()),
@@ -530,6 +685,30 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
         }
     }
 
+    let provider_bridge_mode =
+        std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_MODE").unwrap_or_else(|_| "off".to_string());
+    if provider_bridge_mode
+        .trim()
+        .eq_ignore_ascii_case("bitwarden-production")
+    {
+        let provider_bridge_url =
+            std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_URL").unwrap_or_default();
+        let provider_bridge_token =
+            std::env::var("SECRET_BROKER_PROVIDER_BRIDGE_TOKEN").unwrap_or_default();
+        if !(provider_bridge_url.starts_with("http://")
+            || provider_bridge_url.starts_with("https://"))
+        {
+            anyhow::bail!(
+                "SECRET_BROKER_PROVIDER_BRIDGE_MODE=bitwarden-production requires SECRET_BROKER_PROVIDER_BRIDGE_URL to be an http(s) URL"
+            );
+        }
+        if provider_bridge_token.trim().is_empty() {
+            anyhow::bail!(
+                "SECRET_BROKER_PROVIDER_BRIDGE_MODE=bitwarden-production requires SECRET_BROKER_PROVIDER_BRIDGE_TOKEN"
+            );
+        }
+    }
+
     match cfg.identity_verification_mode {
         identity::IdentityVerificationMode::Off => {}
         identity::IdentityVerificationMode::Stub => {
@@ -585,14 +764,10 @@ pub async fn run() -> anyhow::Result<()> {
     let pool = connect_sqlite(&cfg.db_url).await?;
     init_db(&pool).await?;
     keys::ensure_api_keys(&pool, &cfg).await?;
-
     let state = AppState {
         db: Arc::new(pool),
         cfg: Arc::clone(&cfg),
-        provider: Arc::new(match cfg.provider_bridge_mode {
-            provider::ProviderBridgeMode::Off => provider::ProviderRuntime::off(),
-            provider::ProviderBridgeMode::Stub => provider::ProviderRuntime::stub(),
-        }),
+        provider: provider_runtime_for_config(&cfg),
         adapter: execution_adapter_runtime(&cfg),
         rate_state: Arc::new(Mutex::new(HashMap::new())),
         identity_replay_cache: identity::new_replay_cache(),
@@ -634,7 +809,7 @@ mod tests {
 
     fn test_config(
         db_url: String,
-        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+        provider_bridge_mode: ProviderBridgeMode,
         execution_adapter_mode: crate::adapter::ExecutionAdapterMode,
         request_sign_adapter_url: String,
     ) -> Arc<Config> {
@@ -672,6 +847,11 @@ mod tests {
         secret_ref_masked: String,
     }
 
+    #[derive(Deserialize)]
+    struct MockBitwardenResolvePayload {
+        secret_ref: String,
+    }
+
     async fn spawn_mock_request_sign_service() -> anyhow::Result<String> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
@@ -698,6 +878,82 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
         Ok(format!("http://{addr}/v1/request-sign"))
+    }
+
+    async fn spawn_mock_bitwarden_provider_service(
+        expected_token: &'static str,
+    ) -> anyhow::Result<String> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let app = Router::new().route(
+            "/v1/resolve",
+            post(
+                move |headers: axum::http::HeaderMap,
+                      Json(payload): Json<MockBitwardenResolvePayload>| async move {
+                    let auth_ok = headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .map(|value| value == format!("Bearer {expected_token}"))
+                        .unwrap_or(false);
+
+                    if !auth_ok {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(json!({
+                                "code": "revoked_credential"
+                            })),
+                        );
+                    }
+
+                    let response = match payload.secret_ref.as_str() {
+                        "bw://vault/item/login" => (
+                            StatusCode::OK,
+                            Json(json!({
+                                "provider_name": "bitwarden_production_v1",
+                                "secret_ref_masked": "bw****in",
+                                "secret_hex": hex::encode(b"production-secret-material"),
+                            })),
+                        ),
+                        "bw://vault/item/outage" => (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({
+                                "code": "provider_outage"
+                            })),
+                        ),
+                        "bw://vault/item/revoked" => (
+                            StatusCode::FORBIDDEN,
+                            Json(json!({
+                                "code": "revoked_credential"
+                            })),
+                        ),
+                        "bw://vault/item/missing" => (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({
+                                "code": "missing_ref"
+                            })),
+                        ),
+                        "bw://vault/item/binding-mismatch" => (
+                            StatusCode::CONFLICT,
+                            Json(json!({
+                                "code": "binding_mismatch"
+                            })),
+                        ),
+                        _ => (
+                            StatusCode::NOT_FOUND,
+                            Json(json!({
+                                "code": "missing_ref"
+                            })),
+                        ),
+                    };
+
+                    response
+                },
+            ),
+        );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Ok(format!("http://{addr}/v1/resolve"))
     }
 
     fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
@@ -735,8 +991,54 @@ mod tests {
         result
     }
 
+    async fn with_env_vars_async<T>(
+        vars: &[(&str, Option<&str>)],
+        fut: impl std::future::Future<Output = T>,
+    ) -> T {
+        static ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        let guard = ENV_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+
+        let saved = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+
+        for (key, value) in vars {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+
+        let result = fut.await;
+
+        for (key, value) in saved {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(&key, value),
+                    None => std::env::remove_var(&key),
+                }
+            }
+        }
+
+        drop(guard);
+        result
+    }
+
     async fn setup_app_with_modes(
-        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+        provider_bridge_mode: ProviderBridgeMode,
+        adapter_mode: &str,
+    ) -> anyhow::Result<(Router, Arc<Config>)> {
+        setup_app_with_provider_and_adapter_modes(provider_bridge_mode, adapter_mode).await
+    }
+
+    async fn setup_app_with_provider_and_adapter_modes(
+        provider_bridge_mode: ProviderBridgeMode,
         adapter_mode: &str,
     ) -> anyhow::Result<(Router, Arc<Config>)> {
         let db_file = NamedTempFile::new()?;
@@ -766,12 +1068,7 @@ mod tests {
         let state = AppState {
             db: Arc::new(pool),
             cfg: Arc::clone(&cfg),
-            provider: Arc::new(match cfg.provider_bridge_mode {
-                crate::provider::ProviderBridgeMode::Off => crate::provider::ProviderRuntime::off(),
-                crate::provider::ProviderBridgeMode::Stub => {
-                    crate::provider::ProviderRuntime::stub()
-                }
-            }),
+            provider: provider_runtime_for_config(&cfg),
             adapter: execution_adapter_runtime(&cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
@@ -780,17 +1077,45 @@ mod tests {
     }
 
     async fn setup_app_with_provider_mode(
-        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+        provider_bridge_mode: ProviderBridgeMode,
     ) -> anyhow::Result<(Router, Arc<Config>)> {
         setup_app_with_modes(provider_bridge_mode, "off").await
     }
 
+    async fn setup_app_with_bitwarden_provider_mode(
+        provider_bridge_url: &str,
+        provider_bridge_token: &str,
+        adapter_mode: &str,
+    ) -> anyhow::Result<(Router, Arc<Config>)> {
+        with_env_vars_async(
+            &[
+                (
+                    "SECRET_BROKER_PROVIDER_BRIDGE_MODE",
+                    Some("bitwarden-production"),
+                ),
+                (
+                    "SECRET_BROKER_PROVIDER_BRIDGE_URL",
+                    Some(provider_bridge_url),
+                ),
+                (
+                    "SECRET_BROKER_PROVIDER_BRIDGE_TOKEN",
+                    Some(provider_bridge_token),
+                ),
+            ],
+            setup_app_with_provider_and_adapter_modes(
+                ProviderBridgeMode::BitwardenProduction,
+                adapter_mode,
+            ),
+        )
+        .await
+    }
+
     async fn setup_app() -> anyhow::Result<(Router, Arc<Config>)> {
-        setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Off).await
+        setup_app_with_provider_mode(ProviderBridgeMode::Off).await
     }
 
     async fn setup_app_with_identity_mode(
-        provider_bridge_mode: crate::provider::ProviderBridgeMode,
+        provider_bridge_mode: ProviderBridgeMode,
         adapter_mode: &str,
         identity_mode: crate::identity::IdentityVerificationMode,
     ) -> anyhow::Result<(Router, Arc<Config>)> {
@@ -836,12 +1161,7 @@ mod tests {
         let state = AppState {
             db: Arc::new(pool),
             cfg: Arc::clone(&cfg),
-            provider: Arc::new(match cfg.provider_bridge_mode {
-                crate::provider::ProviderBridgeMode::Off => crate::provider::ProviderRuntime::off(),
-                crate::provider::ProviderBridgeMode::Stub => {
-                    crate::provider::ProviderRuntime::stub()
-                }
-            }),
+            provider: provider_runtime_for_config(&cfg),
             adapter: execution_adapter_runtime(&cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
@@ -1924,8 +2244,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_reports_provider_bridge_mode() -> anyhow::Result<()> {
-        let (app, _cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, _cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
 
         let req = Request::builder()
             .method("GET")
@@ -1956,11 +2275,8 @@ mod tests {
 
     #[tokio::test]
     async fn health_reports_request_sign_production_adapter_mode() -> anyhow::Result<()> {
-        let (app, _cfg) = setup_app_with_modes(
-            crate::provider::ProviderBridgeMode::Stub,
-            "request-sign-production",
-        )
-        .await?;
+        let (app, _cfg) =
+            setup_app_with_modes(ProviderBridgeMode::Stub, "request-sign-production").await?;
 
         let req = Request::builder()
             .method("GET")
@@ -1982,8 +2298,7 @@ mod tests {
 
     #[tokio::test]
     async fn readyz_remains_green_when_stub_provider_is_enabled() -> anyhow::Result<()> {
-        let (app, _cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, _cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
 
         let req = Request::builder()
             .method("GET")
@@ -1991,6 +2306,32 @@ mod tests {
             .body(Body::empty())?;
         let resp = app.clone().oneshot(req).await?;
         assert_eq!(resp.status(), StatusCode::OK);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn health_reports_bitwarden_production_provider_bridge_mode() -> anyhow::Result<()> {
+        let provider_endpoint =
+            spawn_mock_bitwarden_provider_service("bitwarden-production-token").await?;
+        let (app, _cfg) = setup_app_with_bitwarden_provider_mode(
+            &provider_endpoint,
+            "bitwarden-production-token",
+            "off",
+        )
+        .await?;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/healthz")
+            .body(Body::empty())?;
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_response(resp).await;
+        assert_eq!(body["provider"]["mode"], "bitwarden-production");
+        assert_eq!(body["provider"]["provider"], "bitwarden_production_v1");
+        assert_eq!(body["provider"]["configured"], true);
+        assert_eq!(body["provider"]["ready"], true);
         Ok(())
     }
 
@@ -2390,8 +2731,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_uses_stub_adapter_without_leaking_plaintext() -> anyhow::Result<()> {
-        let (app, cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
         let id = create_password_request(&app, &cfg).await;
 
         let approve_req = Request::builder()
@@ -2438,8 +2778,7 @@ mod tests {
 
     #[tokio::test]
     async fn policy_denies_unsupported_adapter_actions_before_execution() -> anyhow::Result<()> {
-        let (app, cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
 
         let create_req = Request::builder()
             .method("POST")
@@ -2465,8 +2804,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rejects_adapter_target_mismatch() -> anyhow::Result<()> {
-        let (app, cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
 
         let create_req = Request::builder()
             .method("POST")
@@ -2523,8 +2861,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_uses_request_sign_adapter_without_leaking_plaintext() -> anyhow::Result<()> {
-        let (app, cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
         let id = create_request_for_action(
             &app,
             &cfg,
@@ -2577,11 +2914,8 @@ mod tests {
     #[tokio::test]
     async fn execute_uses_request_sign_production_adapter_without_leaking_plaintext(
     ) -> anyhow::Result<()> {
-        let (app, cfg) = setup_app_with_modes(
-            crate::provider::ProviderBridgeMode::Stub,
-            "request-sign-production",
-        )
-        .await?;
+        let (app, cfg) =
+            setup_app_with_modes(ProviderBridgeMode::Stub, "request-sign-production").await?;
         let id = create_request_for_action(
             &app,
             &cfg,
@@ -2644,11 +2978,8 @@ mod tests {
     #[tokio::test]
     async fn request_sign_production_adapter_audits_success_and_failure_without_plaintext(
     ) -> anyhow::Result<()> {
-        let (app, cfg) = setup_app_with_modes(
-            crate::provider::ProviderBridgeMode::Stub,
-            "request-sign-production",
-        )
-        .await?;
+        let (app, cfg) =
+            setup_app_with_modes(ProviderBridgeMode::Stub, "request-sign-production").await?;
         let id = create_request_for_action(
             &app,
             &cfg,
@@ -2769,11 +3100,196 @@ mod tests {
         Ok(())
     }
 
+    async fn bitwarden_provider_failure_case(
+        provider_bridge_token: &str,
+        secret_ref: &str,
+        expected_reason: &str,
+    ) -> anyhow::Result<()> {
+        let provider_endpoint =
+            spawn_mock_bitwarden_provider_service("bitwarden-production-token").await?;
+        let (app, cfg) = setup_app_with_bitwarden_provider_mode(
+            &provider_endpoint,
+            provider_bridge_token,
+            "off",
+        )
+        .await?;
+        let id = create_request_for_action(
+            &app,
+            &cfg,
+            "password_fill",
+            secret_ref,
+            "password_fill",
+            "https://example.com/login",
+            "production provider mediation",
+        )
+        .await?;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        let body = json_response(resp).await;
+        assert_eq!(body["code"], "provider_unavailable");
+        assert!(!body.to_string().contains("production-secret-material"));
+
+        let audit_req = Request::builder()
+            .method("GET")
+            .uri("/v1/audit?limit=25")
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let audit_resp = app.clone().oneshot(audit_req).await?;
+        assert_eq!(audit_resp.status(), StatusCode::OK);
+        let audit_json = json_response(audit_resp).await;
+        let rows = audit_json["data"].as_array().expect("audit rows");
+        let item = rows
+            .iter()
+            .find(|row| {
+                row["action"] == "request.provider_resolve_failed" && row["request_id"] == id
+            })
+            .expect("provider failure audit row");
+        assert_eq!(item["details"]["code"], "provider_unavailable");
+        assert_eq!(item["details"]["reason"], expected_reason);
+        assert_eq!(item["details"]["mode"], "bitwarden-production");
+        assert_eq!(item["details"]["provider"], "bitwarden_production_v1");
+        assert!(!item.to_string().contains("production-secret-material"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_uses_bitwarden_production_provider_without_leaking_plaintext(
+    ) -> anyhow::Result<()> {
+        let provider_endpoint =
+            spawn_mock_bitwarden_provider_service("bitwarden-production-token").await?;
+        let (app, cfg) = setup_app_with_bitwarden_provider_mode(
+            &provider_endpoint,
+            "bitwarden-production-token",
+            "off",
+        )
+        .await?;
+        let id = create_request_for_action(
+            &app,
+            &cfg,
+            "password_fill",
+            "bw://vault/item/login",
+            "password_fill",
+            "https://example.com/login",
+            "production provider mediation success",
+        )
+        .await?;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "password_fill",
+                    "target": "https://example.com/login"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_response(resp).await;
+        assert_eq!(
+            body["data"]["result"]["provider"]["provider"],
+            "bitwarden_production_v1"
+        );
+        assert_eq!(body["data"]["result"]["provider"]["resolution"], "resolved");
+        assert_eq!(
+            body["data"]["result"]["provider"]["secret_ref_masked"],
+            "bw****in"
+        );
+        assert!(!body.to_string().contains("production-secret-material"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bitwarden_production_provider_outage_is_masked_and_audited() -> anyhow::Result<()> {
+        bitwarden_provider_failure_case(
+            "bitwarden-production-token",
+            "bw://vault/item/outage",
+            "provider_outage",
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn bitwarden_production_provider_revoked_credential_is_masked_and_audited(
+    ) -> anyhow::Result<()> {
+        bitwarden_provider_failure_case(
+            "revoked-broker-token",
+            "bw://vault/item/login",
+            "revoked_credential",
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn bitwarden_production_provider_missing_ref_is_masked_and_audited() -> anyhow::Result<()>
+    {
+        bitwarden_provider_failure_case(
+            "bitwarden-production-token",
+            "bw://vault/item/missing",
+            "missing_ref",
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn bitwarden_production_provider_binding_mismatch_is_masked_and_audited(
+    ) -> anyhow::Result<()> {
+        bitwarden_provider_failure_case(
+            "bitwarden-production-token",
+            "bw://vault/item/binding-mismatch",
+            "binding_mismatch",
+        )
+        .await
+    }
+
     #[tokio::test]
     async fn execute_uses_credential_handoff_adapter_without_leaking_plaintext(
     ) -> anyhow::Result<()> {
-        let (app, cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
         let id = create_request_for_action(
             &app,
             &cfg,
@@ -2825,8 +3341,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_masks_provider_failures_and_keeps_request_unexecuted() -> anyhow::Result<()> {
-        let (app, cfg) =
-            setup_app_with_provider_mode(crate::provider::ProviderBridgeMode::Stub).await?;
+        let (app, cfg) = setup_app_with_provider_mode(ProviderBridgeMode::Stub).await?;
 
         let create_req = Request::builder()
             .method("POST")
@@ -3060,7 +3575,7 @@ mod tests {
     #[tokio::test]
     async fn health_reports_identity_verification_mode() -> anyhow::Result<()> {
         let (app, _cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::IdentityVerificationMode::Stub,
         )
@@ -3082,7 +3597,7 @@ mod tests {
     #[tokio::test]
     async fn health_reports_host_signed_identity_verification_mode() -> anyhow::Result<()> {
         let (app, _cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3102,7 +3617,7 @@ mod tests {
     #[tokio::test]
     async fn health_reports_host_signed_health_uses_only_usable_hosts() -> anyhow::Result<()> {
         let (app, _cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3205,7 +3720,7 @@ mod tests {
     async fn create_request_rejects_missing_identity_headers_when_attestation_required(
     ) -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::IdentityVerificationMode::Stub,
         )
@@ -3237,7 +3752,7 @@ mod tests {
     #[tokio::test]
     async fn approval_payload_includes_verified_identity_summary() -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3304,7 +3819,7 @@ mod tests {
     #[tokio::test]
     async fn execute_rejects_identity_mismatch_after_approval() -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Stub,
+            ProviderBridgeMode::Stub,
             "stub",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3387,7 +3902,7 @@ mod tests {
     #[tokio::test]
     async fn create_request_rejects_replayed_host_signed_identity_envelope() -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3438,7 +3953,7 @@ mod tests {
     #[tokio::test]
     async fn create_request_rejects_expired_host_signed_identity() -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3480,7 +3995,7 @@ mod tests {
     #[tokio::test]
     async fn create_request_rejects_mismatched_host_runtime_pair() -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3523,7 +4038,7 @@ mod tests {
     async fn approve_rejects_downgraded_identity_mode_for_host_signed_request() -> anyhow::Result<()>
     {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3568,12 +4083,7 @@ mod tests {
         let state = AppState {
             db: Arc::new(pool),
             cfg: Arc::clone(&downgraded_cfg),
-            provider: Arc::new(match downgraded_cfg.provider_bridge_mode {
-                crate::provider::ProviderBridgeMode::Off => crate::provider::ProviderRuntime::off(),
-                crate::provider::ProviderBridgeMode::Stub => {
-                    crate::provider::ProviderRuntime::stub()
-                }
-            }),
+            provider: provider_runtime_for_config(&downgraded_cfg),
             adapter: execution_adapter_runtime(&downgraded_cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
@@ -3595,7 +4105,7 @@ mod tests {
     #[tokio::test]
     async fn host_signed_replay_rejection_is_process_local() -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
+            ProviderBridgeMode::Off,
             "off",
             crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
@@ -3635,7 +4145,7 @@ mod tests {
         let restarted_state = AppState {
             db: Arc::new(pool),
             cfg: Arc::clone(&cfg),
-            provider: Arc::new(crate::provider::ProviderRuntime::off()),
+            provider: provider_runtime_for_config(&cfg),
             adapter: execution_adapter_runtime(&cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
@@ -3861,8 +4371,7 @@ mod tests {
 
     #[tokio::test]
     async fn forensic_bundle_export_is_redact_safe_and_tamper_evident() -> anyhow::Result<()> {
-        let (app, cfg) =
-            setup_app_with_modes(crate::provider::ProviderBridgeMode::Stub, "stub").await?;
+        let (app, cfg) = setup_app_with_modes(ProviderBridgeMode::Stub, "stub").await?;
         let id = create_password_request(&app, &cfg).await;
 
         let approve_req = Request::builder()

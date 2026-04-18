@@ -12,6 +12,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Execution results are masked.
 - Audit events exist for request lifecycle activity.
 - Trusted-side provider bridge contract exists in stub form behind config.
+- A bounded Bitwarden production provider mediation path exists behind `SECRET_BROKER_PROVIDER_BRIDGE_MODE=bitwarden-production`; it resolves `bw://...` refs on the trusted side, keeps provider credentials out of the host-visible request path, and masks outages, revoked credentials, missing refs, and binding mismatches.
 - Provider resolution failures are masked and do not return plaintext.
 - A sanctioned trusted execution adapter registry exists in stub form behind config.
 - A bounded production `request_sign` adapter exists behind `SECRET_BROKER_EXECUTION_ADAPTER_MODE=request-sign-production`; it talks to an explicit trusted-side HTTP signing service via `SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL`, returns only masked output, and does not claim browser automation.
@@ -44,7 +45,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Real browser-fill adapters or additional signing adapters beyond the bounded `request_sign` production path.
 - Additional browser-fill adapters beyond the preview `password_fill` path.
 - Additional signing adapters beyond the bounded `request_sign` production path.
-- Production Bitwarden mediation implemented in this repo.
+- Universal provider mediation beyond the documented Bitwarden production mode.
 - End-to-end node-to-node verification across real host integrations.
 - Supported-host certification for Claude, Codex, or arbitrary external runtime.
 - Strong V4 identity claims for arbitrary external runtimes beyond the documented OpenClaw host-signed preview path.
@@ -57,6 +58,7 @@ For the local supported-host helper path exercised by the harness, the repo also
 That coverage now splits by adapter mode: `password_fill` and `credential_handoff` remain preview-only stub paths, while `request_sign` is covered by the bounded production adapter mode.
 For the preview OpenClaw host path, the repo now also provides host-specific evidence for trusted-input ingress, transcript/log redaction, approval masking, and adapter execution without plaintext leakage.
 For that same preview OpenClaw path, the broker can now require a deployment-wide `host-signed` runtime identity baseline with host-specific keys, one-time attestation envelopes, host/runtime pair checks, and same-process replay rejection for the claimed host id.
+The repo also now supports a narrow Bitwarden production provider mediation path on the trusted side. That path resolves opaque `bw://...` refs without exposing provider credentials or plaintext secret material to the host-visible request path, and it audits the documented failure cases.
 Stronger per-host tiers above a weaker deployment baseline are not a supported secure shape in this repo. Startup rejects that configuration.
 Those claims do not automatically extend to external host apps.
 Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only host-certification authority for V3 claims.

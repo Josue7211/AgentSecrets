@@ -246,7 +246,7 @@ mod tests {
             bind: "127.0.0.1:0".to_string(),
             db_url: "sqlite://policy-test.db?mode=memory".to_string(),
             mode: crate::BrokerMode::Enforce,
-            provider_bridge_mode: crate::provider::ProviderBridgeMode::Off,
+            provider_bridge_mode: crate::ProviderBridgeMode::Off,
             execution_adapter_mode: crate::adapter::ExecutionAdapterMode::Off,
             request_sign_adapter_url: String::new(),
             client_api_key: "test-client-key-123456".to_string(),

@@ -13,12 +13,27 @@ use crate::{
     identity::{execute_identity_guard, verify_headers, IdentityExpectations, IdentitySummary},
     now_unix, ok,
     policy::PolicySummary,
-    provider::SecretProvider,
     sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState, ExecuteBody,
     ExecuteLookupRow,
 };
 
 use super::expire_stale_requests;
+
+fn provider_mode_name(mode: crate::ProviderBridgeMode) -> &'static str {
+    match mode {
+        crate::ProviderBridgeMode::Off => "off",
+        crate::ProviderBridgeMode::Stub => "stub",
+        crate::ProviderBridgeMode::BitwardenProduction => "bitwarden-production",
+    }
+}
+
+fn provider_name_for_mode(mode: crate::ProviderBridgeMode) -> &'static str {
+    match mode {
+        crate::ProviderBridgeMode::Off => "none",
+        crate::ProviderBridgeMode::Stub => "bitwarden_stub",
+        crate::ProviderBridgeMode::BitwardenProduction => "bitwarden_production_v1",
+    }
+}
 
 fn parse_identity_summary(
     status: String,
@@ -427,7 +442,7 @@ pub(crate) async fn execute_request(
     }
 
     let provider_resolution = match state.cfg.provider_bridge_mode {
-        crate::provider::ProviderBridgeMode::Off => None,
+        crate::ProviderBridgeMode::Off => None,
         _ => {
             let resolved = match state.provider.resolve_for_use(&secret_ref).await {
                 Ok(resolved) => resolved,
@@ -444,7 +459,12 @@ pub(crate) async fn execute_request(
                         &auth_ctx.key_fingerprint,
                         "request.provider_resolve_failed",
                         Some(&body.id),
-                        &json!({ "code": code }),
+                        &json!({
+                            "code": code,
+                            "provider": provider_name_for_mode(state.cfg.provider_bridge_mode),
+                            "mode": provider_mode_name(state.cfg.provider_bridge_mode),
+                            "reason": provider_err.message,
+                        }),
                     )
                     .await;
 
@@ -463,10 +483,7 @@ pub(crate) async fn execute_request(
                 Some(&body.id),
                 &json!({
                     "provider": resolved.provider_name,
-                    "mode": match state.cfg.provider_bridge_mode {
-                        crate::provider::ProviderBridgeMode::Off => "off",
-                        crate::provider::ProviderBridgeMode::Stub => "stub",
-                    },
+                    "mode": provider_mode_name(state.cfg.provider_bridge_mode),
                 }),
             )
             .await;
@@ -477,7 +494,7 @@ pub(crate) async fn execute_request(
 
     let provider_result = provider_resolution.as_ref().map(|resolved| {
         json!({
-            "name": resolved.provider_name,
+            "provider": resolved.provider_name,
             "resolution": "resolved",
             "secret_ref_masked": resolved.secret_ref_masked,
         })
