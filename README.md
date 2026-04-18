@@ -1,253 +1,246 @@
 # AgentSecrets
 
-Standalone, open-source secret broker for agent workflows.
+Self-hosted, open-source secret broker for agent workflows.
 
-## Goal
-Allow Claude, Codex, OpenClaw, and other agents to request secret-dependent actions without broker API responses exposing plaintext secret values.
+## About
 
-## Security Guarantees
+AgentSecrets is a Rust service that sits between an agent runtime and any action that depends on sensitive credentials. The broker is designed so agents can ask for secret-dependent work without the broker API returning plaintext secret values.
 
-The current implementation provides **broker-level no-plaintext-response guarantees** and a **broker-owned trusted-input session path** that can mint opaque refs for supported hosts. It still does **not** yet provide a complete end-to-end transcript-safe zero-trust system for arbitrary external host apps.
+This repo is for teams that want a narrow, inspectable trust boundary instead of handing long-lived secrets directly to Claude, Codex, OpenClaw, or other agent runtimes.
 
-Read [docs/product/SECURITY_GUARANTEES.md](docs/product/SECURITY_GUARANTEES.md) before relying on any security property.
-Read [docs/product/REDACTION_POLICY.md](docs/product/REDACTION_POLICY.md) for the current supported-host transcript and log redaction boundary.
+## Why This Exists
+
+Most agent stacks still pass secrets through prompts, transcripts, tool outputs, or loosely-scoped environment variables. That makes review harder and leak paths wider.
+
+AgentSecrets narrows that model:
+
+- Agent runtimes are treated as untrusted.
+- Secrets stay behind the broker boundary.
+- Requests can require human approval.
+- Execution is bound to a one-time capability token.
+- Broker responses stay masked instead of returning plaintext secret material.
+
+## How It Works
+
+1. A host or agent creates a secret-dependent request.
+2. The broker validates policy and risk.
+3. A human approver can approve or deny high-risk actions.
+4. Approval mints a short-lived, single-use capability token.
+5. The agent executes the approved action through the broker.
+6. The broker returns masked results and appends audit evidence.
+
+```mermaid
+flowchart LR
+    A[Agent Runtime or Supported Host] -->|Create request| B[Secret Broker]
+    B -->|Policy evaluation| C{Needs approval?}
+    C -->|Yes| D[Human Approver]
+    D -->|Approve or deny| B
+    C -->|No| E[Capability token]
+    B -->|Approved request| E
+    E -->|Single use execute| B
+    B -->|Masked result only| A
+    B -->|Append-only audit log| F[(Audit Chain)]
+    B -->|Secret resolution and trusted actions| G[Trusted Provider or Adapter Boundary]
+```
+
+## Current Status
+
+The project already provides broker-level no-plaintext-response guarantees and a broker-owned trusted-input session path for supported hosts.
+
+It does **not** yet claim a universal, end-to-end transcript-safe zero-trust system for arbitrary external host applications. If you need exact shipping boundaries, read these first:
+
+- [Security guarantees](docs/product/SECURITY_GUARANTEES.md)
+- [Redaction policy](docs/product/REDACTION_POLICY.md)
+- [Supported hosts](docs/product/SUPPORTED_HOSTS.md)
+- [Platform support](docs/product/PLATFORM_SUPPORT.md)
+
 Read [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) for the current V3 host-certification boundary.
-Read [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) for the current V4 control and support boundary.
+Use [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) as the only V3 host-certification source of truth.
 
-## Production-grade defaults
-- Role-separated API keys (`client` and `approver`)
+## What Ships Today
+
+- Role-separated API keys for `client` and `approver`
 - Modes: `off`, `monitor`, `enforce`
 - Single-use capability tokens with TTL
-- Replay protection (`capability_used_at` lock)
+- Replay protection
 - Approval-time binding of request id, action, and target
-- Policy checks (target prefix allowlist, amount caps)
+- Policy checks for target allowlists and amount caps
 - Automatic expiry of stale requests
 - Masked-only execution responses
-- Audit log with hash-chain tamper evidence
+- Append-only audit log with hash-chain tamper evidence
 - Request-level rate limiting
-- Registry-backed trusted execution adapter paths for masked `password_fill`, `request_sign`, and `credential_handoff`
-- Broker-owned trusted input sessions that mint one-time opaque refs
-- Supported-host helper transcript and log redaction hooks for the local harness path
-- Explainable policy decisions over action, target, actor, environment, and risk
-- Deployment-wide runtime identity baselines: `stub` for local helper deployments or `host-signed` for the documented external preview host deployment
+- Trusted-input sessions that mint one-time opaque refs
+- Registry-backed trusted execution adapter paths for supported actions
 - Audit-chain verification and redact-safe forensic bundle export
-- Repeatable rotation/recovery drills and adversarial verification lanes
+- Cross-platform service paths for Linux, macOS, and Windows
 
-## Security model
-- Agent runtimes are treated as untrusted.
+## Security Model
+
+- Agent runtimes are untrusted.
 - Broker API responses do not return plaintext secret values.
-- `secret_ref` must be an opaque identifier such as `bw://vault/item/login` or a broker-issued `tir://session/<id>` ref.
+- `secret_ref` must be opaque, such as `bw://vault/item/login` or a broker-issued `tir://session/<id>` ref.
 - Plaintext secret values are rejected at request creation.
-- Rejected ingress attempts are audited without echoing the submitted secret content.
-- Trusted input sessions are bounded, expire, and can only be consumed once into a matching request context.
-- High-risk requests can require human approval.
+- Rejected ingress attempts are audited without echoing submitted secret content.
+- Trusted-input sessions are bounded, expire, and can only be consumed once into a matching request context.
 - Approval responses include masked review payloads.
-- Approvals are bound to request id, action, target, and token TTL.
 - Capability tokens are one-time and invalid after execution.
-- External host-app transcript safety is **not** currently guaranteed by this repo outside the supported matrix.
-- The local supported-host helper path now has tested transcript and log redaction coverage plus sanctioned adapter coverage, but that claim does not automatically extend to arbitrary host runtimes.
+- External host-app transcript safety is only claimed inside the documented support matrix.
 
-## Code layout
-- [src/lib.rs](src/lib.rs): config, DB init, router wiring, runtime entrypoint
-- [src/adapter.rs](src/adapter.rs): trusted execution adapter contract and stub runtime
-- [src/handlers/health.rs](src/handlers/health.rs): liveness and readiness endpoints
-- [src/handlers/requests.rs](src/handlers/requests.rs): request lifecycle and audit listing
-- [src/handlers/trusted_input.rs](src/handlers/trusted_input.rs): trusted input session lifecycle and opaque ref issuance
-- [src/handlers/execution.rs](src/handlers/execution.rs): capability-guarded execution path
-- [src/auth.rs](src/auth.rs): API key auth and rate limiting
-- [src/keys.rs](src/keys.rs): DB-backed API key seeding and rotation
-- [src/policy.rs](src/policy.rs): validation and policy decisions
-- [src/audit.rs](src/audit.rs): append-only hash-chain audit logging
-- [migrations/0001_init.sql](migrations/0001_init.sql): source of truth for the initial schema
-- [migrations/0002_capability_binding.sql](migrations/0002_capability_binding.sql): approval-time capability binding fields
-- [migrations/0003_trusted_input_sessions.sql](migrations/0003_trusted_input_sessions.sql): trusted input session persistence and opaque ref issuance
+## Quickstart
 
-## API
-- `GET /healthz` (no auth)
-- `GET /readyz` (no auth, DB readiness)
-- `POST /v1/trusted-input/sessions` (`client` or `approver`)
-- `GET /v1/trusted-input/sessions/:id` (`client` or `approver`)
-- `POST /v1/trusted-input/sessions/:id/complete` (`client` or `approver`)
-- `POST /v1/requests` (`client` or `approver`)
-- `GET /v1/requests` (`client` or `approver`)
-- `POST /v1/requests/:id/approve` (`approver`)
-- `POST /v1/requests/:id/deny` (`approver`)
-- `POST /v1/execute` (`client` or `approver`)
-- `GET /v1/audit` (`approver`)
-- `POST /v1/admin/keys/:role/rotate` (`approver`)
+For a full operator guide, use [docs/product/QUICKSTART.md](docs/product/QUICKSTART.md). Minimal local setup:
 
-## Auth
-Use either:
-- `Authorization: Bearer <key>`
-- `x-api-key: <key>`
+1. Copy `.env.example` to `.env`.
+2. Set strong values for:
+   - `SECRET_BROKER_CLIENT_API_KEY`
+   - `SECRET_BROKER_APPROVER_API_KEY`
+3. Set `SECRET_BROKER_MODE=enforce`.
+4. Start the broker:
 
-## Configuration
-Copy `.env.example` and set:
-- `SECRET_BROKER_MODE=enforce`
-- `SECRET_BROKER_CLIENT_API_KEY=...`
-- `SECRET_BROKER_APPROVER_API_KEY=...`
-
-Optional:
-- `SECRET_BROKER_ALLOWED_TARGET_PREFIXES`
-- `SECRET_BROKER_MAX_AMOUNT_CENTS`
-- `SECRET_BROKER_CAPABILITY_TTL_SECONDS`
-- `SECRET_BROKER_PROVIDER_BRIDGE_MODE=off|stub`
-- `SECRET_BROKER_EXECUTION_ADAPTER_MODE=off|stub|request-sign-production`
-- `SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL=http://127.0.0.1:8088/v1/request-sign` when `request-sign-production` is enabled
-- `SECRET_BROKER_REQUEST_TTL_SECONDS`
-- `SECRET_BROKER_RATE_LIMIT_PER_MINUTE`
-- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=off|stub|host-signed|hardware-backed`
-- `SECRET_BROKER_IDENTITY_ATTESTATION_KEY`
-- `SECRET_BROKER_IDENTITY_ATTESTATION_MAX_AGE_SECONDS`
-- `SECRET_BROKER_TRUSTED_RUNTIME_IDS`
-- `SECRET_BROKER_TRUSTED_HOST_IDS`
-- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=<host>=<key>,...`
-- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
-
-Recommended host-signed preview-host deployment:
-- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed`
-- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=openclaw-http-host=<strong random key>`
-- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=openclaw-http-host=openclaw-runtime-v1`
-
-Replay note:
-- Host-signed envelope replay rejection is currently process-local to the running broker instance. It is not yet durable across broker restart or failover.
-
-Identity startup note:
-- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub` now fails startup unless `SECRET_BROKER_IDENTITY_ATTESTATION_KEY` is set.
-- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed` now fails startup unless at least one host appears in both `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS` and `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS`.
-- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=hardware-backed` currently fails startup because that tier is not implemented.
-
-`enforce` mode startup validations:
-- Refuses to run with default dev API keys
-- Requires distinct client and approver keys
-- Requires keys with minimum length
-
-Startup behavior:
-- Env keys seed the `api_keys` table on first run
-- Active auth keys are served from the database
-- Rotated keys take effect immediately without restart
-- Schema is applied through SQL migrations on startup
-- Provider bridge modes:
-  - `off`: default, no trusted-side provider resolution path
-- `stub`: enables the stub Bitwarden provider bridge for contract verification
-- Execution adapter modes:
-  - `off`: default, no trusted-side secret-consumption path
-  - `stub`: enables the V3 sanctioned adapter registry for `password_fill`, `request_sign`, and `credential_handoff` on documented targets
-
-## Run
 ```bash
 cargo run
 ```
 
-Default bind: `127.0.0.1:4815`.
+Default bind address: `127.0.0.1:4815`
 
-Cross-platform deployment:
-- Primary platforms:
-  - Linux:
-    - [systemd/secret-broker.service](systemd/secret-broker.service)
-    - [systemd/secret-broker-backup.service](systemd/secret-broker-backup.service)
-    - [systemd/secret-broker-backup.timer](systemd/secret-broker-backup.timer)
-  - macOS:
-    - [launchd/com.secret-broker.plist](launchd/com.secret-broker.plist)
-- Secondary platform:
-  - Windows:
-    - [docs/operations/OPERATIONS.md](docs/operations/OPERATIONS.md#windows-service)
-    - [windows/install-secret-broker.ps1](windows/install-secret-broker.ps1)
-- Release checklist:
-  - [docs/product/RELEASE.md](docs/product/RELEASE.md)
-  - includes the V2, V3, and V4 ship gates, claims tables, and manual signoff
-- Quickstart:
-  - [docs/product/QUICKSTART.md](docs/product/QUICKSTART.md)
-- Threat model:
-  - [docs/architecture/THREAT_MODEL.md](docs/architecture/THREAT_MODEL.md)
-- Troubleshooting:
-  - [docs/operations/TROUBLESHOOTING.md](docs/operations/TROUBLESHOOTING.md)
+Health check:
 
-Container:
+```bash
+scripts/healthcheck.sh http://127.0.0.1:4815
+```
+
+Container path:
+
 ```bash
 docker build -t secret-broker .
 docker run --rm -p 4815:4815 --env-file .env secret-broker
 ```
 
-## Test
+## API Overview
+
+- `GET /healthz`
+- `GET /readyz`
+- `POST /v1/trusted-input/sessions`
+- `GET /v1/trusted-input/sessions/:id`
+- `POST /v1/trusted-input/sessions/:id/complete`
+- `POST /v1/requests`
+- `GET /v1/requests`
+- `POST /v1/requests/:id/approve`
+- `POST /v1/requests/:id/deny`
+- `POST /v1/execute`
+- `GET /v1/audit`
+- `POST /v1/admin/keys/:role/rotate`
+
+Auth headers:
+
+- `Authorization: Bearer <key>`
+- `x-api-key: <key>`
+
+## Configuration
+
+Required for a real deployment:
+
+- `SECRET_BROKER_MODE=enforce`
+- `SECRET_BROKER_CLIENT_API_KEY=...`
+- `SECRET_BROKER_APPROVER_API_KEY=...`
+
+Common controls:
+
+- `SECRET_BROKER_ALLOWED_TARGET_PREFIXES`
+- `SECRET_BROKER_MAX_AMOUNT_CENTS`
+- `SECRET_BROKER_CAPABILITY_TTL_SECONDS`
+- `SECRET_BROKER_REQUEST_TTL_SECONDS`
+- `SECRET_BROKER_RATE_LIMIT_PER_MINUTE`
+
+Trusted-input and host identity controls:
+
+- `SECRET_BROKER_PROVIDER_BRIDGE_MODE=off|stub`
+- `SECRET_BROKER_EXECUTION_ADAPTER_MODE=off|stub|request-sign-production`
+- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=off|stub|host-signed|hardware-backed`
+- `SECRET_BROKER_IDENTITY_ATTESTATION_KEY`
+- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=<host>=<key>,...`
+- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
+
+Recommended documented OpenClaw host deployment:
+
+- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed`
+- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=openclaw-http-host=<strong random key>`
+- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=openclaw-http-host=openclaw-runtime-v1`
+
+Notes:
+
+- `enforce` mode refuses default dev keys and requires distinct client and approver keys.
+- Env keys seed the `api_keys` table on first run.
+- Rotated keys take effect immediately without restart.
+- `hardware-backed` identity mode is not implemented yet.
+- Host-signed envelope replay rejection is currently process-local, not durable across restart or failover.
+
+See `.env.example` for the full variable set.
+
+## Run And Test
+
+Run the service:
+
+```bash
+cargo run
+```
+
+Run tests:
+
 ```bash
 cargo test
 ```
 
-Loop 5 node-to-node E2E harness:
-```bash
-bash scripts/run-e2e-harness.sh
-```
-
-Harness artifacts are written to `target/e2e-artifacts/` with redacted logs and summaries.
-
 Static checks:
+
 ```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Healthcheck:
+E2E harness:
+
 ```bash
-scripts/healthcheck.sh http://127.0.0.1:4815
+bash scripts/run-e2e-harness.sh
 ```
 
 Forensics:
+
 ```bash
 cargo run --bin forensics -- verify-chain --db sqlite://secret-broker.db?mode=rwc
 ```
 
-Quick install on one box:
-```bash
-sudo install -d /opt/secret-broker /etc/secret-broker /var/lib/secret-broker /var/backups/secret-broker
-sudo install -m 755 target/release/secret-broker /opt/secret-broker/secret-broker
-sudo install -m 644 systemd/secret-broker.service /etc/systemd/system/secret-broker.service
-sudo install -m 644 systemd/secret-broker-backup.service /etc/systemd/system/secret-broker-backup.service
-sudo install -m 644 systemd/secret-broker-backup.timer /etc/systemd/system/secret-broker-backup.timer
-sudo systemctl daemon-reload
-sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
-```
+## Code Layout
 
-## Example flow
-1. Supported host starts a trusted input session (`POST /v1/trusted-input/sessions`).
-2. Trusted host input completes the session and receives a broker opaque ref (`POST /v1/trusted-input/sessions/:id/complete`).
-3. Agent creates request with that opaque ref (`POST /v1/requests`).
-4. Approver approves (`POST /v1/requests/:id/approve`) and receives one-time capability token.
-5. Approval response includes masked review context (`request_type`, masked `secret_ref`, `action`, `target`, `reason`).
-6. Agent executes with capability (`POST /v1/execute`) and must present the approved `action` and `target`.
-7. Broker returns masked execution result only, including masked adapter summaries when the trusted adapter registry is enabled.
-8. Local harness evidence now proves the stubbed broker flow, the trusted-input ingress path, and the sanctioned helper adapter paths stay free of plaintext secret material in untrusted helper transcripts and redacted artifacts.
-9. Any broader host transcript or chatbox safety claim still depends on the specific host integration and its certification status in [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md).
+- [src/lib.rs](src/lib.rs): config, DB init, router wiring, runtime entrypoint
+- [src/adapter.rs](src/adapter.rs): trusted execution adapter contract and stub runtime
+- [src/handlers/health.rs](src/handlers/health.rs): liveness and readiness endpoints
+- [src/handlers/requests.rs](src/handlers/requests.rs): request lifecycle and audit listing
+- [src/handlers/trusted_input.rs](src/handlers/trusted_input.rs): trusted-input session lifecycle and opaque ref issuance
+- [src/handlers/execution.rs](src/handlers/execution.rs): capability-guarded execution path
+- [src/auth.rs](src/auth.rs): API key auth and rate limiting
+- [src/keys.rs](src/keys.rs): DB-backed API key seeding and rotation
+- [src/policy.rs](src/policy.rs): validation and policy decisions
+- [src/audit.rs](src/audit.rs): append-only hash-chain audit logging
+- [migrations/](migrations): schema history
 
-## Integration notes
-- Any OpenClaw, Claude, Codex, or custom agent runtime should call broker instead of direct secret routes.
-- Agent runtimes should use the `client` key only.
-- Human approval apps, including iOS dispatch-style flows, should use the `approver` key.
-- Supported hosts that want transcript-safer ingress should use the trusted-input session flow and pass only the broker opaque ref back to the agent runtime.
-- Bitwarden is intended to stay on your services VM; future target architecture may mediate `bw://...` refs over the private network.
-- The repo now has a trusted-side provider boundary in stub form.
-- The repo now has a trusted-side sanctioned adapter registry in stub form for masked `password_fill`, `request_sign`, and `credential_handoff`.
-- The repo now has a broker-owned trusted input surface for supported hosts, but still does **not** claim production Bitwarden mediation, real browser automation, or universal transcript-safe host execution.
-- Use [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) as the only V3 host-certification source of truth.
-- See [docs/architecture/OPENCLAW.md](docs/architecture/OPENCLAW.md) for the generic OpenClaw drop-in contract.
+## Docs Map
 
-## Platform support
-- The broker binary is intended to run on Linux and macOS first.
-- Linux gets `systemd` examples because that is the simplest self-hosted path.
-- macOS uses `launchd`.
-- Windows remains supported, but as a secondary path; see [docs/operations/OPERATIONS.md](docs/operations/OPERATIONS.md#windows-service).
-- If your OpenClaw setup is remote, keep the broker private-network only and let the host app talk to the broker over HTTP.
+- [Docs index](docs/INDEX.md)
+- [Quickstart](docs/product/QUICKSTART.md)
+- [Integration notes](docs/product/INTEGRATION.md)
+- [Threat model](docs/architecture/THREAT_MODEL.md)
+- [Operations runbook](docs/operations/OPERATIONS.md)
+- [Troubleshooting](docs/operations/TROUBLESHOOTING.md)
+- [Roadmap](ROADMAP.md)
+- [Release gates and claim authority](docs/product/RELEASE.md)
 
-## Production checklist
-- Set strong random values for `SECRET_BROKER_CLIENT_API_KEY` and `SECRET_BROKER_APPROVER_API_KEY`
-- Keep broker on private network or localhost
-- Keep Bitwarden on the services VM behind private network access
-- Enable `SECRET_BROKER_MODE=enforce`
-- Set strict `SECRET_BROKER_ALLOWED_TARGET_PREFIXES`
-- Set conservative `SECRET_BROKER_MAX_AMOUNT_CENTS`
-- Monitor `/v1/audit` and export logs
-- Use [operations runbook](docs/operations/OPERATIONS.md)
-- Keep CI required on pull requests [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-- Rotate keys through `/v1/admin/keys/:role/rotate` instead of editing env files in place
-- Use [docs/product/RELEASE.md](docs/product/RELEASE.md) as the only V2 and V3 ship authority
-- Use [docs/product/RELEASE.md](docs/product/RELEASE.md) and [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) as the only V4 platform ship authority
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). For security-sensitive findings, use [SECURITY.md](SECURITY.md).
+
+If you change public behavior, update the README and the docs alongside the code.
+
+## License
+
+This project is licensed under [AGPL-3.0-or-later](LICENSE).
