@@ -1,0 +1,6 @@
+[advisories]
+ignore = [
+  # sqlx keeps optional MySQL support packages in Cargo.lock even though this repo
+  # only builds against SQLite. cargo tree/metadata show sqlx-mysql is inactive.
+  "RUSTSEC-2023-0071",
+]

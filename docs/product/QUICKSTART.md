@@ -1,8 +1,8 @@
 # Quickstart
 
-This broker is a drop-in secrets layer for OpenClaw and similar agent runtimes.
-The agent runtime should only hold the `client` key. Human approval tooling should only hold the `approver` key.
-Linux and macOS are the primary host platforms. Windows is supported, but secondary.
+This repo currently provides broker-level masked-response guarantees. It does **not** yet provide a fully supported transcript-safe host integration.
+
+The agent runtime should only hold the `client` key. Human approval tooling should only hold the `approver` key. Linux and macOS are the primary host platforms. Windows is supported, but secondary.
 
 ## Before you start
 
@@ -12,7 +12,7 @@ Linux and macOS are the primary host platforms. Windows is supported, but second
   - `SECRET_BROKER_CLIENT_API_KEY`
   - `SECRET_BROKER_APPROVER_API_KEY`
 - Set `SECRET_BROKER_MODE=enforce`
-- Keep Bitwarden on the services VM and let the broker mediate all `bw://...` access
+- Do **not** type secrets into prompts, chat boxes, or task memory
 
 ## Linux quickstart
 
@@ -20,11 +20,14 @@ Linux and macOS are the primary host platforms. Windows is supported, but second
 2. Install the `systemd` units from [systemd/](../systemd/).
 3. Put your environment file at `/etc/secret-broker/secret-broker.env`.
 4. Start the service:
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now secret-broker.service
 ```
+
 5. Verify readiness:
+
 ```bash
 scripts/healthcheck.sh http://127.0.0.1:4815
 ```
@@ -33,12 +36,15 @@ scripts/healthcheck.sh http://127.0.0.1:4815
 
 1. Install the binary somewhere stable, such as `/usr/local/opt/secret-broker/bin/secret-broker`.
 2. Install [launchd/com.secret-broker.plist](../launchd/com.secret-broker.plist).
-3. Replace the placeholder environment values in the plist.
+3. Replace the placeholder environment values in the plist and ensure the DB setting uses a valid SQLite URL for this runtime.
 4. Load the service:
+
 ```bash
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.secret-broker.plist
 ```
+
 5. Verify readiness:
+
 ```bash
 scripts/healthcheck.sh http://127.0.0.1:4815
 ```
@@ -50,14 +56,14 @@ scripts/healthcheck.sh http://127.0.0.1:4815
 3. Supply the client and approver API keys when prompted.
 4. Verify readiness against the local bind address after the service starts.
 
-## OpenClaw wiring
+## Supported use today
 
-Use this flow for any OpenClaw setup:
+Use this flow for current broker-level guarantees:
 
-1. OpenClaw sends request intent to the broker with the `client` key.
+1. The host sends request intent to the broker with the `client` key.
 2. The broker evaluates policy and either approves immediately or returns `pending_approval`.
 3. The human approval app uses the `approver` key to approve or deny.
-4. OpenClaw executes with the one-time capability token.
+4. The host executes with the one-time capability token.
 5. The broker returns masked results only.
 
 ## Minimum safety settings

@@ -1,7 +1,8 @@
-FROM rust:1.86-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY migrations ./migrations
 RUN cargo build --release
 
 FROM debian:bookworm-slim
@@ -10,6 +11,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --create-home --home-dir /app appuser
+RUN mkdir -p /var/lib/secret-broker && chown appuser:appuser /var/lib/secret-broker
 WORKDIR /app
 COPY --from=builder /app/target/release/secret-broker /usr/local/bin/secret-broker
 USER appuser

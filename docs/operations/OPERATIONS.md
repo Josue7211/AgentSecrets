@@ -21,11 +21,28 @@ Recommended:
 - `SECRET_BROKER_ALLOWED_TARGET_PREFIXES=<strict csv allowlist>`
 - `SECRET_BROKER_MAX_AMOUNT_CENTS=<small safe limit>`
 - `SECRET_BROKER_RATE_LIMIT_PER_MINUTE=<fit to workload>`
+- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub`
+- `SECRET_BROKER_IDENTITY_ATTESTATION_KEY=<strong random key>`
+- `SECRET_BROKER_TRUSTED_RUNTIME_IDS=<csv>`
+- `SECRET_BROKER_TRUSTED_HOST_IDS=<csv>`
+- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=<host>=<strong random key>,...`
+- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
+
+Identity baseline guidance:
+- Choose one deployment-wide baseline per broker instance.
+- Use `stub` for the local helper harness path.
+- Use `host-signed` for the documented OpenClaw preview host path.
+- Do not try to escalate one host above a weaker broker-wide baseline. Startup now rejects that shape.
+- If the global baseline is `host-signed`, startup now fails unless at least one host is configured in both `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS` and `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS`.
+- If the global baseline is `stub`, startup now fails unless `SECRET_BROKER_IDENTITY_ATTESTATION_KEY` is set.
+- If the global baseline is `hardware-backed`, startup fails because that tier is not implemented.
+- Host-signed replay rejection is process-local to the running broker instance today; it does not survive restart.
 
 ## Health checks
 - Liveness: `GET /healthz`
 - Readiness: `GET /readyz`
 - Local script: `scripts/healthcheck.sh http://127.0.0.1:4815`
+- `GET /healthz` now reports the identity baseline plus usable host-signed host ids so operators can see the active deployment picture.
 
 ## One-box service
 - Install [systemd/secret-broker.service](../systemd/secret-broker.service)
@@ -55,6 +72,8 @@ Recommended:
 - Poll/export `GET /v1/audit` using approver key
 - Alert on repeated `invalid_capability`, `rate_limited`, and `forbidden` events
 - Audit any direct access path to the Bitwarden host VM
+- Verify audit integrity with `cargo run --bin forensics -- verify-chain --db <sqlite-url>`
+- Export redact-safe forensic bundles with `cargo run --bin forensics -- export-bundle --db <sqlite-url> --out <dir>`
 
 ## Backups
 - Backup SQLite DB on a fixed schedule
@@ -73,3 +92,5 @@ Recommended:
 3. Restart broker if you need to force all instances onto the latest DB state
 4. Review `/v1/audit` chain and surrounding request records
 5. Tighten target allowlist and amount cap if needed
+6. Run `bash scripts/run-rotation-recovery-drills.sh` after containment to verify recovery discipline
+7. Run `bash scripts/run-adversarial-suite.sh extended` before restoring stronger claims

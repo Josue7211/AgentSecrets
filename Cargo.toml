@@ -6,11 +6,13 @@ license = "AGPL-3.0-or-later"
 description = "AgentSecrets: standalone zero-trust secret broker for OpenClaw and other agent runtimes"
 
 [dependencies]
+async-trait = "0.1"
 axum = { version = "0.7", features = ["macros"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -18,7 +20,7 @@ sha2 = "0.10"
 rand = "0.8"
 hex = "0.4"
 subtle = "2.6"
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "macros", "migrate"] }
 time = "0.3"
 
 [dev-dependencies]

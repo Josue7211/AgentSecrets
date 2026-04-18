@@ -1,0 +1,153 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-18T08:15:00-04:00",
+  "branch": "roadmap/zero-trust-v2-v4-hardening",
+  "status": "v5_planning_ready",
+  "workstream": "post-v4 roadmap and docs IA handoff",
+  "current_position": {
+    "completed_upstream_commit": "543ed8b",
+    "completed_upstream_scope": [
+      "V2 Loop 1 secret ingress lockdown",
+      "V2 Loop 2 provider isolation contract"
+    ],
+    "current_session_scope": [
+      "completed V2 Loop 3 through V2 Loop 6",
+      "completed V3 Loop 0 through V3 Loop 4",
+      "completed V4 Loop 0 through V4 Loop 5",
+      "seeded the canonical V5 through V10 roadmap in ROADMAP.md",
+      "designed and implemented the docs information architecture cleanup",
+      "migrated canonical docs into product, architecture, operations, plans, specs, and backlog ownership folders",
+      "repaired migrated doc links and verified the docs tree is clean"
+    ],
+    "next_loop": "V5 Loop 0",
+    "next_entrypoint": "ROADMAP.md"
+  },
+  "completed_work": [
+    {
+      "id": 1,
+      "name": "Recovered repo handoff and verified branch state",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "name": "Confirmed V2 Loop 1 and V2 Loop 2 were already implemented and green at commit 543ed8b",
+      "status": "done"
+    },
+    {
+      "id": 3,
+      "name": "Implemented V2 Loop 3 through V2 Loop 6",
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "name": "Implemented V3 Loop 0 through V3 Loop 4",
+      "status": "done"
+    },
+    {
+      "id": 5,
+      "name": "Implemented V4 Loop 0 through V4 Loop 5",
+      "status": "done"
+    },
+    {
+      "id": 6,
+      "name": "Completed post-V4 production bridge work",
+      "status": "done"
+    },
+    {
+      "id": 7,
+      "name": "Authored the canonical V5 through V10 roadmap",
+      "status": "done"
+    },
+    {
+      "id": 8,
+      "name": "Authored the docs information architecture design and execution plan",
+      "status": "done"
+    },
+    {
+      "id": 9,
+      "name": "Completed the docs information architecture cleanup and verification",
+      "status": "done"
+    }
+  ],
+  "remaining_work": [
+    {
+      "id": 1,
+      "name": "Start V5 Loop 0 Host Contract Canon",
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "Author the V5L0 spec and implementation plan before code changes",
+      "status": "pending"
+    }
+  ],
+  "repo_gap_notes": [
+    "The old V2 through V4 roadmap is complete and verified, but the product roadmap continues in this repo through V10.",
+    "V5 through V10 are planned, not implemented.",
+    "External host claims remain matrix-bound: OpenClaw is preview and Claude/Codex/arbitrary external runtimes are unsupported for shipped trust claims.",
+    "Identity verification remains a local stub-attestation contract, not hardware-backed or vendor-specific attestation.",
+    "Trusted execution is not yet universal external-host trusted execution; future claims must stay evidence-bound."
+  ],
+  "likely_touch_points": [
+    "ROADMAP.md",
+    "docs/INDEX.md",
+    "docs/product/RELEASE.md",
+    "docs/product/SUPPORTED_HOSTS.md",
+    "docs/product/PLATFORM_SUPPORT.md",
+    "docs/plans/v5/2026-04-17-post-v4-vision-completion.md",
+    "docs/specs/2026-04-18-docs-information-architecture-design.md"
+  ],
+  "resume_guardrails": [
+    "Do not expand host or runtime support claims beyond docs/product/SUPPORTED_HOSTS.md and docs/product/PLATFORM_SUPPORT.md without new evidence.",
+    "Treat ROADMAP.md as the single roadmap source of truth.",
+    "Keep docs/INDEX.md as navigation only, not a second roadmap.",
+    "Preserve version-owned plans under docs/plans/ and version-owned backlog under docs/backlog/.",
+    "For V5 work, write the host contract canon spec and plan before implementation."
+  ],
+  "decisions": [
+    {
+      "decision": "Treat V2 through V4 as shipped foundation and V5 through V10 as the next product ladder",
+      "rationale": "The repo now has a broader canonical roadmap, so future work should advance that ladder instead of pretending the roadmap ends at V4."
+    },
+    {
+      "decision": "Treat ROADMAP.md as the single roadmap truth and docs/INDEX.md as the human docs entrypoint",
+      "rationale": "The docs IA cleanup established one roadmap source of truth and one navigation entrypoint."
+    },
+    {
+      "decision": "Keep external host support matrix-bound until each host earns shipped evidence",
+      "rationale": "V5 is explicitly built around first-class host certification, not umbrella support badges."
+    }
+  ],
+  "blockers": [
+    "No canonical V5 host contract exists yet.",
+    "Hermes, Claude, and Codex do not yet have host-specific certification lanes."
+  ],
+  "human_actions_pending": [],
+  "background_processes": [],
+  "uncommitted_files": [],
+  "next_action": "Start V5 Loop 0 from ROADMAP.md. Define the canonical first-class host contract, then write the V5L0 spec and execution plan before touching product code.",
+  "context_notes": "Repo truth now: V2, V3, and V4 are shipped and verified. Post-V4 bridge work is complete. The repo now carries a canonical V5 through V10 roadmap in ROADMAP.md, and the docs tree has been reorganized so product truth lives under docs/product, architecture truth under docs/architecture, operations under docs/operations, plans under docs/plans, specs under docs/specs, and version-owned backlog under docs/backlog. The current product roadmap state is V5 planned, V5 Loop 0 not started.",
+  "verification_ran": [
+    "cargo fmt --all -- --check",
+    "cargo check --all-targets --all-features",
+    "cargo test --all-targets --all-features -- --nocapture",
+    "cargo clippy --all-targets --all-features -- -D warnings",
+    "bash scripts/run-e2e-harness.sh",
+    "bash scripts/check-v2-ship-gate.sh",
+    "bash scripts/check-v3-ship-gate.sh",
+    "bash scripts/check-v4-ship-gate.sh",
+    "bash scripts/run-rotation-recovery-drills.sh",
+    "bash scripts/run-adversarial-suite.sh pr",
+    "bash scripts/run-adversarial-suite.sh extended",
+    "find docs -maxdepth 3 -type f | sort",
+    "find docs/superpowers -maxdepth 3 -type f 2>/dev/null || true",
+    "git status --short --branch"
+  ],
+  "resume_commands": [
+    "git status --short --branch",
+    "sed -n '1,120p' ROADMAP.md",
+    "sed -n '1,200p' docs/INDEX.md",
+    "sed -n '1,200p' docs/product/RELEASE.md",
+    "sed -n '1,200p' docs/product/SUPPORTED_HOSTS.md"
+  ]
+}

@@ -6,13 +6,73 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
+    adapter::{AdapterErrorCode, AdapterRequest, TrustedExecutionAdapter},
     audit::append_audit,
     auth::{enforce_rate_limit, require_client_or_approver},
-    err, now_unix, ok, sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState,
-    ExecuteBody, ExecuteLookupRow,
+    err,
+    identity::{execute_identity_guard, verify_headers, IdentityExpectations, IdentitySummary},
+    now_unix, ok,
+    policy::PolicySummary,
+    sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState, ExecuteBody,
+    ExecuteLookupRow,
 };
 
 use super::expire_stale_requests;
+
+fn provider_mode_name(mode: crate::ProviderBridgeMode) -> &'static str {
+    match mode {
+        crate::ProviderBridgeMode::Off => "off",
+        crate::ProviderBridgeMode::Stub => "stub",
+        crate::ProviderBridgeMode::BitwardenProduction => "bitwarden-production",
+    }
+}
+
+fn provider_name_for_mode(mode: crate::ProviderBridgeMode) -> &'static str {
+    match mode {
+        crate::ProviderBridgeMode::Off => "none",
+        crate::ProviderBridgeMode::Stub => "bitwarden_stub",
+        crate::ProviderBridgeMode::BitwardenProduction => "bitwarden_production_v1",
+    }
+}
+
+fn parse_identity_summary(
+    status: String,
+    mode: String,
+    runtime_id: Option<String>,
+    host_id: Option<String>,
+    adapter_id: Option<String>,
+    verified_at: Option<String>,
+) -> Option<IdentitySummary> {
+    let (Some(runtime_id), Some(host_id), Some(adapter_id), Some(verified_at)) =
+        (runtime_id, host_id, adapter_id, verified_at)
+    else {
+        return None;
+    };
+
+    Some(IdentitySummary {
+        status,
+        mode,
+        runtime_id,
+        host_id,
+        adapter_id,
+        verified_at,
+    })
+}
+
+fn parse_policy_summary(
+    outcome: String,
+    risk_score: i64,
+    environment: String,
+    reasons_json: String,
+) -> PolicySummary {
+    let reasons = serde_json::from_str::<Vec<String>>(&reasons_json).unwrap_or_default();
+    PolicySummary {
+        outcome,
+        risk_score,
+        environment,
+        reasons,
+    }
+}
 
 pub(crate) async fn execute_request(
     State(state): State<AppState>,
@@ -39,7 +99,11 @@ pub(crate) async fn execute_request(
     }
 
     let row: Option<ExecuteLookupRow> = sqlx::query_as(
-        "SELECT status, action, target, capability_hash, capability_expires_at
+        "SELECT status, action, target, secret_ref, capability_hash, capability_expires_at,
+                capability_request_id, capability_action, capability_target, capability_issued_at,
+                policy_outcome, policy_risk_score, policy_environment, policy_reasons,
+                identity_status, identity_mode, identity_runtime_id, identity_host_id,
+                identity_adapter_id, identity_verified_at
          FROM secret_broker_requests
          WHERE id = ?
          LIMIT 1",
@@ -55,9 +119,32 @@ pub(crate) async fn execute_request(
         )
     })?;
 
-    let Some((status, action, target, capability_hash, capability_expires_at)) = row else {
+    let Some(row) = row else {
         return Err(err(StatusCode::NOT_FOUND, "not_found", "Request not found"));
     };
+
+    let ExecuteLookupRow {
+        status,
+        action,
+        target,
+        secret_ref,
+        capability_hash,
+        capability_expires_at,
+        capability_request_id,
+        capability_action,
+        capability_target,
+        capability_issued_at,
+        policy_outcome,
+        policy_risk_score,
+        policy_environment,
+        policy_reasons,
+        identity_status,
+        identity_mode,
+        identity_runtime_id,
+        identity_host_id,
+        identity_adapter_id,
+        identity_verified_at,
+    } = row;
 
     if status != "approved" {
         return Err(err(
@@ -67,24 +154,67 @@ pub(crate) async fn execute_request(
         ));
     }
 
-    if let Some(ref expected_action) = body.action {
-        if expected_action != &action {
+    let Some(expected_action) = body.action.as_deref() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "action is required",
+        ));
+    };
+    let Some(expected_target) = body.target.as_deref() else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "target is required",
+        ));
+    };
+
+    let current_identity = match verify_headers(
+        &state.cfg,
+        &headers,
+        IdentityExpectations {
+            action: expected_action,
+            adapter_id: crate::identity::adapter_id_for_action_in_mode(
+                expected_action,
+                state.cfg.execution_adapter_mode,
+            ),
+        },
+        now_unix(),
+        &state.identity_replay_cache,
+    ) {
+        Ok(identity) => identity,
+        Err(identity_err) => {
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.identity_rejected",
+                Some(&body.id),
+                &json!({ "reason": identity_err.code }),
+            )
+            .await;
+
             return Err(err(
                 StatusCode::FORBIDDEN,
-                "action_mismatch",
-                "Action mismatch",
+                identity_err.code,
+                identity_err.message,
             ));
         }
-    }
-    if let Some(ref expected_target) = body.target {
-        if expected_target != &target {
-            return Err(err(
-                StatusCode::FORBIDDEN,
-                "target_mismatch",
-                "Target mismatch",
-            ));
-        }
-    }
+    };
+
+    let stored_identity = parse_identity_summary(
+        identity_status,
+        identity_mode,
+        identity_runtime_id,
+        identity_host_id,
+        identity_adapter_id,
+        identity_verified_at,
+    );
+    let stored_policy = parse_policy_summary(
+        policy_outcome.unwrap_or_else(|| "allow".to_string()),
+        policy_risk_score.unwrap_or_default(),
+        policy_environment.unwrap_or_else(|| "unknown".to_string()),
+        policy_reasons.unwrap_or_else(|| "[]".to_string()),
+    );
 
     let Some(stored_hash) = capability_hash else {
         return Err(err(
@@ -102,25 +232,374 @@ pub(crate) async fn execute_request(
         ));
     }
 
-    if let Some(ref expires) = capability_expires_at {
-        if let Some(exp_unix) = sqlite_datetime_to_unix(expires) {
-            if now_unix() > exp_unix {
-                sqlx::query(
-                    "UPDATE secret_broker_requests SET status = 'expired', updated_at = datetime('now') WHERE id = ?",
+    let Some(bound_request_id) = capability_request_id.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_request_binding" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(bound_action) = capability_action.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_action_binding" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(bound_target) = capability_target.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_target_binding" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(_issued_at) = capability_issued_at.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_issue_time" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+    let Some(expires) = capability_expires_at.as_deref() else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "missing_expiry" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+
+    if bound_request_id != body.id {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "request_binding_mismatch" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    }
+
+    if action != bound_action || expected_action != bound_action {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.execute_rejected",
+            Some(&body.id),
+            &json!({ "reason": "action_mismatch" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "action_mismatch",
+            "Action mismatch",
+        ));
+    }
+    if target != bound_target || expected_target != bound_target {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.execute_rejected",
+            Some(&body.id),
+            &json!({ "reason": "target_mismatch" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "target_mismatch",
+            "Target mismatch",
+        ));
+    }
+
+    if let Err(identity_err) = execute_identity_guard(
+        &state.cfg,
+        stored_identity.as_ref(),
+        current_identity.as_ref(),
+    ) {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.execute_rejected",
+            Some(&body.id),
+            &json!({ "reason": identity_err.code }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            identity_err.code,
+            identity_err.message,
+        ));
+    }
+
+    let Some(exp_unix) = sqlite_datetime_to_unix(expires) else {
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_invalid",
+            Some(&body.id),
+            &json!({ "reason": "invalid_expiry" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "invalid_capability_context",
+            "Capability context is invalid",
+        ));
+    };
+
+    if now_unix() > exp_unix {
+        sqlx::query(
+            "UPDATE secret_broker_requests
+             SET status = 'expired',
+                 capability_hash = NULL,
+                 capability_expires_at = NULL,
+                 capability_request_id = NULL,
+                 capability_action = NULL,
+                 capability_target = NULL,
+                 capability_issued_at = NULL,
+                 updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(&body.id)
+        .execute(&*state.db)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "db_error",
+                "Failed to expire request",
+            )
+        })?;
+
+        let _ = append_audit(
+            &state.db,
+            &auth_ctx.key_fingerprint,
+            "request.capability_expired",
+            Some(&body.id),
+            &json!({ "reason": "expired" }),
+        )
+        .await;
+
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "capability_expired",
+            "Capability token expired",
+        ));
+    }
+
+    let provider_resolution = match state.cfg.provider_bridge_mode {
+        crate::ProviderBridgeMode::Off => None,
+        _ => {
+            let resolved = match state.provider.resolve_for_use(&secret_ref).await {
+                Ok(resolved) => resolved,
+                Err(provider_err) => {
+                    let code = match provider_err.code {
+                        crate::provider::ProviderErrorCode::UnsupportedProvider => {
+                            "provider_unsupported"
+                        }
+                        crate::provider::ProviderErrorCode::Unavailable => "provider_unavailable",
+                    };
+
+                    let _ = append_audit(
+                        &state.db,
+                        &auth_ctx.key_fingerprint,
+                        "request.provider_resolve_failed",
+                        Some(&body.id),
+                        &json!({
+                            "code": code,
+                            "provider": provider_name_for_mode(state.cfg.provider_bridge_mode),
+                            "mode": provider_mode_name(state.cfg.provider_bridge_mode),
+                            "reason": provider_err.message,
+                        }),
+                    )
+                    .await;
+
+                    return Err(err(
+                        StatusCode::BAD_GATEWAY,
+                        code,
+                        "Trusted provider resolution failed",
+                    ));
+                }
+            };
+
+            let _ = append_audit(
+                &state.db,
+                &auth_ctx.key_fingerprint,
+                "request.provider_resolved",
+                Some(&body.id),
+                &json!({
+                    "provider": resolved.provider_name,
+                    "mode": provider_mode_name(state.cfg.provider_bridge_mode),
+                }),
+            )
+            .await;
+
+            Some(resolved)
+        }
+    };
+
+    let provider_result = provider_resolution.as_ref().map(|resolved| {
+        json!({
+            "provider": resolved.provider_name,
+            "resolution": "resolved",
+            "secret_ref_masked": resolved.secret_ref_masked,
+        })
+    });
+    let adapter_mode = match state.cfg.execution_adapter_mode {
+        crate::adapter::ExecutionAdapterMode::Off => "off",
+        crate::adapter::ExecutionAdapterMode::Stub => "stub",
+        crate::adapter::ExecutionAdapterMode::RequestSignProduction => "request-sign-production",
+    };
+    let adapter_id =
+        crate::identity::adapter_id_for_action_in_mode(&action, state.cfg.execution_adapter_mode);
+
+    let adapter_result = match state.cfg.execution_adapter_mode {
+        crate::adapter::ExecutionAdapterMode::Off => None,
+        _ => {
+            let Some(resolved) = provider_resolution else {
+                let _ = append_audit(
+                    &state.db,
+                    &auth_ctx.key_fingerprint,
+                    "request.adapter_failed",
+                    Some(&body.id),
+                    &json!({
+                        "adapter": adapter_id,
+                        "mode": adapter_mode,
+                        "code": "adapter_provider_missing",
+                        "action": expected_action,
+                        "target": expected_target,
+                        "policy": stored_policy.clone(),
+                    }),
                 )
-                .bind(&body.id)
-                .execute(&*state.db)
-                .await
-                .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "db_error", "Failed to expire request"))?;
+                .await;
 
                 return Err(err(
-                    StatusCode::FORBIDDEN,
-                    "capability_expired",
-                    "Capability token expired",
+                    StatusCode::BAD_GATEWAY,
+                    "adapter_provider_missing",
+                    "Trusted execution adapter could not run",
                 ));
+            };
+
+            let adapter_request = AdapterRequest {
+                action: &action,
+                target: &target,
+            };
+
+            match state.adapter.execute(adapter_request, resolved).await {
+                Ok(masked) => {
+                    let _ = append_audit(
+                        &state.db,
+                        &auth_ctx.key_fingerprint,
+                        "request.adapter_succeeded",
+                        Some(&body.id),
+                        &json!({
+                            "adapter": masked.adapter,
+                            "mode": adapter_mode,
+                            "action": expected_action,
+                            "target": expected_target,
+                            "policy": stored_policy.clone(),
+                        }),
+                    )
+                    .await;
+
+                    Some(
+                        serde_json::to_value(masked)
+                            .unwrap_or_else(|_| json!({"adapter": "unknown"})),
+                    )
+                }
+                Err(adapter_err) => {
+                    let (status, code) = match adapter_err.code {
+                        AdapterErrorCode::Disabled => (StatusCode::BAD_GATEWAY, "adapter_disabled"),
+                        AdapterErrorCode::UnsupportedAction => {
+                            (StatusCode::BAD_REQUEST, "adapter_action_unsupported")
+                        }
+                        AdapterErrorCode::TargetMismatch => {
+                            (StatusCode::BAD_REQUEST, "adapter_target_mismatch")
+                        }
+                        AdapterErrorCode::Unavailable => {
+                            (StatusCode::BAD_GATEWAY, "adapter_unavailable")
+                        }
+                    };
+
+                    let _ = append_audit(
+                        &state.db,
+                        &auth_ctx.key_fingerprint,
+                        "request.adapter_failed",
+                        Some(&body.id),
+                        &json!({
+                            "adapter": adapter_id,
+                            "mode": adapter_mode,
+                            "code": code,
+                            "action": expected_action,
+                            "target": expected_target,
+                            "policy": stored_policy.clone(),
+                        }),
+                    )
+                    .await;
+
+                    return Err(err(
+                        status,
+                        code,
+                        "Trusted execution adapter rejected request",
+                    ));
+                }
             }
         }
-    }
+    };
 
     let execution_result = json!({
         "ok": true,
@@ -129,6 +608,10 @@ pub(crate) async fn execute_request(
             "action": action,
             "target": target,
         },
+        "provider": provider_result,
+        "adapter": adapter_result,
+        "policy": stored_policy,
+        "identity": current_identity,
         "note": "no plaintext secrets returned",
     });
 
@@ -138,6 +621,11 @@ pub(crate) async fn execute_request(
              capability_used_at = datetime('now'),
              execution_result = ?,
              capability_hash = NULL,
+             capability_expires_at = NULL,
+             capability_request_id = NULL,
+             capability_action = NULL,
+             capability_target = NULL,
+             capability_issued_at = NULL,
              updated_at = datetime('now')
          WHERE id = ? AND capability_used_at IS NULL",
     )
