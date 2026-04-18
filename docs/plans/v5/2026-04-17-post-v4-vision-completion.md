@@ -39,7 +39,7 @@ Ship in this order:
 
 Treat the broader vision as complete only when all of these are true:
 
-- At least one real external host is `shipped` in [docs/SUPPORTED_HOSTS.md](../SUPPORTED_HOSTS.md).
+- At least one real external host is `shipped` in [docs/product/SUPPORTED_HOSTS.md](../product/SUPPORTED_HOSTS.md).
 - That host has host-specific trusted-input, transcript/log redaction, and adapter E2E evidence.
 - At least one non-stub production adapter exists and is release-gated.
 - Provider mediation exists for a real secret source without exposing plaintext to the untrusted host path.
@@ -49,18 +49,18 @@ Treat the broader vision as complete only when all of these are true:
 ### Task 1: Certify OpenClaw As The First Real Host
 
 **Files:**
-- Modify: `docs/OPENCLAW.md`
-- Modify: `docs/SUPPORTED_HOSTS.md`
-- Modify: `docs/INTEGRATION.md`
-- Modify: `docs/RELEASE.md`
+- Modify: `docs/architecture/OPENCLAW.md`
+- Modify: `docs/product/SUPPORTED_HOSTS.md`
+- Modify: `docs/product/INTEGRATION.md`
+- Modify: `docs/product/RELEASE.md`
 - Modify: `src/bin/e2e-node.rs`
 - Modify: `src/lib.rs`
 - Create: `scripts/run-openclaw-e2e.sh`
-- Create: `docs/OPENCLAW_THREAT_NOTES.md`
+- Create: `docs/architecture/OPENCLAW_THREAT_NOTES.md`
 
 **Outcome:** Move OpenClaw from contract-only preview to a host with real certification evidence, or keep it preview if any bar fails.
 
-- [ ] Define the exact OpenClaw trust boundary and data-flow contract in `docs/OPENCLAW.md`.
+- [ ] Define the exact OpenClaw trust boundary and data-flow contract in `docs/architecture/OPENCLAW.md`.
 - [ ] Add host-specific threat notes covering transcript sinks, log sinks, tool-call payloads, retries, and failure paths.
 - [ ] Extend the current harness so OpenClaw-style HTTP traffic is exercised as a distinct host path rather than folded into the generic helper path.
 - [ ] Add OpenClaw E2E assertions for:
@@ -69,7 +69,7 @@ Treat the broader vision as complete only when all of these are true:
   - request approval payload masking
   - adapter execution without plaintext leakage
 - [ ] Add `scripts/run-openclaw-e2e.sh` and wire it into CI as preview evidence.
-- [ ] Update `docs/SUPPORTED_HOSTS.md` so OpenClaw remains `preview` until the new suite is green, then promote it to `shipped`.
+- [ ] Update `docs/product/SUPPORTED_HOSTS.md` so OpenClaw remains `preview` until the new suite is green, then promote it to `shipped`.
 - [ ] Commit with message: `feat: certify openclaw host path`
 
 **Verification:**
@@ -85,18 +85,18 @@ Treat the broader vision as complete only when all of these are true:
 - Modify: `src/handlers/execution.rs`
 - Modify: `src/handlers/health.rs`
 - Modify: `src/lib.rs`
-- Modify: `docs/PLATFORM_SUPPORT.md`
-- Modify: `docs/SECURITY_GUARANTEES.md`
-- Modify: `docs/RELEASE.md`
-- Create: `docs/IDENTITY_MODEL.md`
+- Modify: `docs/product/PLATFORM_SUPPORT.md`
+- Modify: `docs/product/SECURITY_GUARANTEES.md`
+- Modify: `docs/product/RELEASE.md`
+- Create: `docs/product/IDENTITY_MODEL.md`
 
 **Outcome:** Make identity claims mean more than signed local headers and make them host-specific.
 
-- [ ] Define identity tiers in `docs/IDENTITY_MODEL.md`: `off`, `stub`, `host-signed`, `hardware-backed` or equivalent.
+- [ ] Define identity tiers in `docs/product/IDENTITY_MODEL.md`: `off`, `stub`, `host-signed`, `hardware-backed` or equivalent.
 - [ ] Separate current stub verification from the stronger verification path in `src/identity.rs` instead of treating them as the same trust class.
 - [ ] Bind request approval and execute-time checks to the stronger identity tier for the first shipped external host.
 - [ ] Add tests for replayed identity envelopes, expired identity, mismatched host/runtime pairs, and downgraded identity mode.
-- [ ] Update `docs/PLATFORM_SUPPORT.md` so platform claims distinguish stub-only paths from stronger identity paths.
+- [ ] Update `docs/product/PLATFORM_SUPPORT.md` so platform claims distinguish stub-only paths from stronger identity paths.
 - [ ] Commit with message: `feat: add strong host identity verification`
 
 **Verification:**
@@ -110,16 +110,16 @@ Treat the broader vision as complete only when all of these are true:
 - Modify: `src/adapter.rs`
 - Modify: `src/handlers/execution.rs`
 - Modify: `src/lib.rs`
-- Modify: `docs/PLATFORM_SUPPORT.md`
-- Modify: `docs/SECURITY_GUARANTEES.md`
-- Modify: `docs/RELEASE.md`
-- Create: `docs/ADAPTERS.md`
+- Modify: `docs/product/PLATFORM_SUPPORT.md`
+- Modify: `docs/product/SECURITY_GUARANTEES.md`
+- Modify: `docs/product/RELEASE.md`
+- Create: `docs/product/ADAPTERS.md`
 - Create: `scripts/run-adapter-e2e.sh`
 
 **Outcome:** Replace at least one stub adapter with a bounded production adapter, without widening claims past evidence.
 
 - [ ] Pick one adapter only for first ship: `request_sign` is the cleanest candidate because it avoids UI automation.
-- [ ] Document the adapter boundary, inputs, outputs, audit fields, failure handling, and rollback policy in `docs/ADAPTERS.md`.
+- [ ] Document the adapter boundary, inputs, outputs, audit fields, failure handling, and rollback policy in `docs/product/ADAPTERS.md`.
 - [ ] Implement the production adapter behind an explicit config mode separate from the current stub.
 - [ ] Add E2E cases proving:
   - no plaintext broker response
@@ -140,15 +140,15 @@ Treat the broader vision as complete only when all of these are true:
 - Modify: `src/lib.rs`
 - Modify: `src/handlers/trusted_input.rs`
 - Modify: `src/handlers/requests.rs`
-- Modify: `docs/SECURITY_GUARANTEES.md`
-- Modify: `docs/INTEGRATION.md`
-- Modify: `docs/RELEASE.md`
-- Create: `docs/PROVIDER_MEDIATION.md`
+- Modify: `docs/product/SECURITY_GUARANTEES.md`
+- Modify: `docs/product/INTEGRATION.md`
+- Modify: `docs/product/RELEASE.md`
+- Create: `docs/product/PROVIDER_MEDIATION.md`
 - Create: `scripts/run-provider-mediation-e2e.sh`
 
 **Outcome:** Let the broker resolve a real secret source on the trusted side without turning the host into a provider client.
 
-- [ ] Define the provider mediation contract in `docs/PROVIDER_MEDIATION.md`, including what material is allowed to cross the broker boundary.
+- [ ] Define the provider mediation contract in `docs/product/PROVIDER_MEDIATION.md`, including what material is allowed to cross the broker boundary.
 - [ ] Add one real provider integration path behind an explicit production mode.
 - [ ] Ensure trusted-input and request creation still accept opaque refs only from the host side.
 - [ ] Add tests for provider outage, revoked credential, missing ref, wrong vault/item binding, and audit visibility.
@@ -163,9 +163,9 @@ Treat the broader vision as complete only when all of these are true:
 ### Task 5: Create A Real External-Host Ship Gate
 
 **Files:**
-- Modify: `docs/SUPPORTED_HOSTS.md`
-- Modify: `docs/PLATFORM_SUPPORT.md`
-- Modify: `docs/RELEASE.md`
+- Modify: `docs/product/SUPPORTED_HOSTS.md`
+- Modify: `docs/product/PLATFORM_SUPPORT.md`
+- Modify: `docs/product/RELEASE.md`
 - Modify: `.github/workflows/ci.yml`
 - Create: `scripts/check-external-host-ship-gate.sh`
 
@@ -220,4 +220,3 @@ This plan succeeds when:
 - One stronger-than-stub identity path is live for that host.
 - One production adapter and one production provider mediation path are release-gated.
 - Docs and CI make overclaiming difficult.
-

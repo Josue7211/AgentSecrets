@@ -15,7 +15,7 @@ Out of scope:
 Implementation order:
 
 1. Release criteria
-- update `docs/RELEASE.md` with an explicit V2 checklist tied to Loops 0 through 5
+- update `docs/product/RELEASE.md` with an explicit V2 checklist tied to Loops 0 through 5
 - add a support matrix that distinguishes shipped, preview, and unsupported paths
 - add release-note language for what V2 does and does not guarantee
 - require docs truth to match current implementation and test evidence
@@ -41,4 +41,3 @@ Acceptance:
 - docs truth matches implementation
 - node-to-node E2E evidence is green
 - release notes clearly state what V2 does and does not guarantee
-

@@ -40,53 +40,53 @@
 - `docs/INDEX.md`
 - `docs/backlog/INDEX.md`
 
-**Move canonical product docs:**
-- `docs/ADAPTERS.md` -> `docs/product/ADAPTERS.md`
-- `docs/IDENTITY_MODEL.md` -> `docs/product/IDENTITY_MODEL.md`
-- `docs/INTEGRATION.md` -> `docs/product/INTEGRATION.md`
-- `docs/PLATFORM_SUPPORT.md` -> `docs/product/PLATFORM_SUPPORT.md`
-- `docs/PROVIDER_MEDIATION.md` -> `docs/product/PROVIDER_MEDIATION.md`
-- `docs/QUICKSTART.md` -> `docs/product/QUICKSTART.md`
-- `docs/REDACTION_POLICY.md` -> `docs/product/REDACTION_POLICY.md`
-- `docs/RELEASE.md` -> `docs/product/RELEASE.md`
-- `docs/SECURITY_GUARANTEES.md` -> `docs/product/SECURITY_GUARANTEES.md`
-- `docs/SUPPORTED_HOSTS.md` -> `docs/product/SUPPORTED_HOSTS.md`
+**Current canonical product docs:**
+- `docs/product/ADAPTERS.md`
+- `docs/product/IDENTITY_MODEL.md`
+- `docs/product/INTEGRATION.md`
+- `docs/product/PLATFORM_SUPPORT.md`
+- `docs/product/PROVIDER_MEDIATION.md`
+- `docs/product/QUICKSTART.md`
+- `docs/product/REDACTION_POLICY.md`
+- `docs/product/RELEASE.md`
+- `docs/product/SECURITY_GUARANTEES.md`
+- `docs/product/SUPPORTED_HOSTS.md`
 
-**Move canonical architecture docs:**
-- `docs/ARCHITECTURE.md` -> `docs/architecture/ARCHITECTURE.md`
-- `docs/OPENCLAW.md` -> `docs/architecture/OPENCLAW.md`
-- `docs/OPENCLAW_THREAT_NOTES.md` -> `docs/architecture/OPENCLAW_THREAT_NOTES.md`
-- `docs/THREAT_MODEL.md` -> `docs/architecture/THREAT_MODEL.md`
+**Current canonical architecture docs:**
+- `docs/architecture/ARCHITECTURE.md`
+- `docs/architecture/OPENCLAW.md`
+- `docs/architecture/OPENCLAW_THREAT_NOTES.md`
+- `docs/architecture/THREAT_MODEL.md`
 
-**Move canonical operations docs:**
-- `docs/OPERATIONS.md` -> `docs/operations/OPERATIONS.md`
-- `docs/TROUBLESHOOTING.md` -> `docs/operations/TROUBLESHOOTING.md`
+**Current canonical operations docs:**
+- `docs/operations/OPERATIONS.md`
+- `docs/operations/TROUBLESHOOTING.md`
 
-**Move plan artifacts:**
-- `docs/superpowers/plans/2026-04-16-v2-loop-0-truth-reset.md` -> `docs/plans/v2/2026-04-16-v2-loop-0-truth-reset.md`
-- `docs/superpowers/plans/2026-04-17-v2-loop-1-secret-ingress-lockdown.md` -> `docs/plans/v2/2026-04-17-v2-loop-1-secret-ingress-lockdown.md`
-- `docs/superpowers/plans/2026-04-17-v2-loop-2-provider-isolation-contract.md` -> `docs/plans/v2/2026-04-17-v2-loop-2-provider-isolation-contract.md`
-- `docs/superpowers/plans/2026-04-17-v2-loop-3-execution-adapter-containment.md` -> `docs/plans/v2/2026-04-17-v2-loop-3-execution-adapter-containment.md`
-- `docs/superpowers/plans/2026-04-17-v2-loop-4-capability-and-approval-hardening.md` -> `docs/plans/v2/2026-04-17-v2-loop-4-capability-and-approval-hardening.md`
-- `docs/superpowers/plans/2026-04-17-v2-loop-5-memd-style-node-to-node-e2e-harness.md` -> `docs/plans/v2/2026-04-17-v2-loop-5-memd-style-node-to-node-e2e-harness.md`
-- `docs/superpowers/plans/2026-04-17-v2-loop-6-v2-ship-gate.md` -> `docs/plans/v2/2026-04-17-v2-loop-6-v2-ship-gate.md`
-- `docs/superpowers/plans/2026-04-17-v3-loop-0-trusted-input-surface.md` -> `docs/plans/v3/2026-04-17-v3-loop-0-trusted-input-surface.md`
-- `docs/superpowers/plans/2026-04-17-v3-loop-1-transcript-and-log-redaction-pipeline.md` -> `docs/plans/v3/2026-04-17-v3-loop-1-transcript-and-log-redaction-pipeline.md`
-- `docs/superpowers/plans/2026-04-17-v3-loop-2-real-trusted-execution-adapters.md` -> `docs/plans/v3/2026-04-17-v3-loop-2-real-trusted-execution-adapters.md`
-- `docs/superpowers/plans/2026-04-17-v3-loop-3-multi-host-support-matrix.md` -> `docs/plans/v3/2026-04-17-v3-loop-3-multi-host-support-matrix.md`
-- `docs/superpowers/plans/2026-04-17-v3-loop-4-v3-ship-gate.md` -> `docs/plans/v3/2026-04-17-v3-loop-4-v3-ship-gate.md`
-- `docs/superpowers/plans/2026-04-17-v4-loop-0-policy-engine-maturity.md` -> `docs/plans/v4/2026-04-17-v4-loop-0-policy-engine-maturity.md`
-- `docs/superpowers/plans/2026-04-17-v4-loop-1-attestation-and-runtime-identity.md` -> `docs/plans/v4/2026-04-17-v4-loop-1-attestation-and-runtime-identity.md`
-- `docs/superpowers/plans/2026-04-17-v4-loop-2-tamper-evident-operations-and-forensics.md` -> `docs/plans/v4/2026-04-17-v4-loop-2-tamper-evident-operations-and-forensics.md`
-- `docs/superpowers/plans/2026-04-17-v4-loop-3-rotation-and-recovery-drills.md` -> `docs/plans/v4/2026-04-17-v4-loop-3-rotation-and-recovery-drills.md`
-- `docs/superpowers/plans/2026-04-17-v4-loop-4-adversarial-continuous-verification.md` -> `docs/plans/v4/2026-04-17-v4-loop-4-adversarial-continuous-verification.md`
-- `docs/superpowers/plans/2026-04-17-v4-loop-5-platform-ship-gate.md` -> `docs/plans/v4/2026-04-17-v4-loop-5-platform-ship-gate.md`
-- `docs/superpowers/plans/2026-04-17-post-v4-vision-completion.md` -> `docs/plans/v5/2026-04-17-post-v4-vision-completion.md`
+**Current plan artifacts:**
+- `docs/plans/v2/2026-04-16-v2-loop-0-truth-reset.md`
+- `docs/plans/v2/2026-04-17-v2-loop-1-secret-ingress-lockdown.md`
+- `docs/plans/v2/2026-04-17-v2-loop-2-provider-isolation-contract.md`
+- `docs/plans/v2/2026-04-17-v2-loop-3-execution-adapter-containment.md`
+- `docs/plans/v2/2026-04-17-v2-loop-4-capability-and-approval-hardening.md`
+- `docs/plans/v2/2026-04-17-v2-loop-5-memd-style-node-to-node-e2e-harness.md`
+- `docs/plans/v2/2026-04-17-v2-loop-6-v2-ship-gate.md`
+- `docs/plans/v3/2026-04-17-v3-loop-0-trusted-input-surface.md`
+- `docs/plans/v3/2026-04-17-v3-loop-1-transcript-and-log-redaction-pipeline.md`
+- `docs/plans/v3/2026-04-17-v3-loop-2-real-trusted-execution-adapters.md`
+- `docs/plans/v3/2026-04-17-v3-loop-3-multi-host-support-matrix.md`
+- `docs/plans/v3/2026-04-17-v3-loop-4-v3-ship-gate.md`
+- `docs/plans/v4/2026-04-17-v4-loop-0-policy-engine-maturity.md`
+- `docs/plans/v4/2026-04-17-v4-loop-1-attestation-and-runtime-identity.md`
+- `docs/plans/v4/2026-04-17-v4-loop-2-tamper-evident-operations-and-forensics.md`
+- `docs/plans/v4/2026-04-17-v4-loop-3-rotation-and-recovery-drills.md`
+- `docs/plans/v4/2026-04-17-v4-loop-4-adversarial-continuous-verification.md`
+- `docs/plans/v4/2026-04-17-v4-loop-5-platform-ship-gate.md`
+- `docs/plans/v5/2026-04-17-post-v4-vision-completion.md`
 
-**Move spec artifacts:**
-- `docs/superpowers/specs/2026-04-16-zero-trust-v2-v4-hardening-roadmap-design.md` -> `docs/specs/2026-04-16-zero-trust-v2-v4-hardening-roadmap-design.md`
-- `docs/superpowers/specs/2026-04-17-zero-trust-v2-v4-remaining-loop-spec-pack.md` -> `docs/specs/2026-04-17-zero-trust-v2-v4-remaining-loop-spec-pack.md`
-- keep `docs/specs/2026-04-18-docs-information-architecture-design.md` in place
+**Current spec artifacts:**
+- `docs/specs/2026-04-16-zero-trust-v2-v4-hardening-roadmap-design.md`
+- `docs/specs/2026-04-17-zero-trust-v2-v4-remaining-loop-spec-pack.md`
+- `docs/specs/2026-04-18-docs-information-architecture-design.md`
 
 ### Task 1: Create Entrypoints And Folder Skeleton
 
@@ -235,52 +235,55 @@ git commit -m "docs: add IA entrypoints and folder skeleton"
 **Files:**
 - Modify: `README.md`
 - Modify: `ROADMAP.md`
-- Move: `docs/ADAPTERS.md`
-- Move: `docs/IDENTITY_MODEL.md`
-- Move: `docs/INTEGRATION.md`
-- Move: `docs/PLATFORM_SUPPORT.md`
-- Move: `docs/PROVIDER_MEDIATION.md`
-- Move: `docs/QUICKSTART.md`
-- Move: `docs/REDACTION_POLICY.md`
-- Move: `docs/RELEASE.md`
-- Move: `docs/SECURITY_GUARANTEES.md`
-- Move: `docs/SUPPORTED_HOSTS.md`
-- Move: `docs/ARCHITECTURE.md`
-- Move: `docs/OPENCLAW.md`
-- Move: `docs/OPENCLAW_THREAT_NOTES.md`
-- Move: `docs/THREAT_MODEL.md`
-- Move: `docs/OPERATIONS.md`
-- Move: `docs/TROUBLESHOOTING.md`
+- Current canonical product docs:
+  - `docs/product/ADAPTERS.md`
+  - `docs/product/IDENTITY_MODEL.md`
+  - `docs/product/INTEGRATION.md`
+  - `docs/product/PLATFORM_SUPPORT.md`
+  - `docs/product/PROVIDER_MEDIATION.md`
+  - `docs/product/QUICKSTART.md`
+  - `docs/product/REDACTION_POLICY.md`
+  - `docs/product/RELEASE.md`
+  - `docs/product/SECURITY_GUARANTEES.md`
+  - `docs/product/SUPPORTED_HOSTS.md`
+- Current canonical architecture docs:
+  - `docs/architecture/ARCHITECTURE.md`
+  - `docs/architecture/OPENCLAW.md`
+  - `docs/architecture/OPENCLAW_THREAT_NOTES.md`
+  - `docs/architecture/THREAT_MODEL.md`
+- Current canonical operations docs:
+  - `docs/operations/OPERATIONS.md`
+  - `docs/operations/TROUBLESHOOTING.md`
 
 - [ ] **Step 1: Move product docs into `docs/product/`**
 
 ```bash
-mv docs/ADAPTERS.md docs/product/ADAPTERS.md
-mv docs/IDENTITY_MODEL.md docs/product/IDENTITY_MODEL.md
-mv docs/INTEGRATION.md docs/product/INTEGRATION.md
-mv docs/PLATFORM_SUPPORT.md docs/product/PLATFORM_SUPPORT.md
-mv docs/PROVIDER_MEDIATION.md docs/product/PROVIDER_MEDIATION.md
-mv docs/QUICKSTART.md docs/product/QUICKSTART.md
-mv docs/REDACTION_POLICY.md docs/product/REDACTION_POLICY.md
-mv docs/RELEASE.md docs/product/RELEASE.md
-mv docs/SECURITY_GUARANTEES.md docs/product/SECURITY_GUARANTEES.md
-mv docs/SUPPORTED_HOSTS.md docs/product/SUPPORTED_HOSTS.md
+mv <legacy product doc> docs/product/ADAPTERS.md
+mv <legacy product doc> docs/product/IDENTITY_MODEL.md
+mv <legacy product doc> docs/product/INTEGRATION.md
+mv <legacy product doc> docs/product/PLATFORM_SUPPORT.md
+mv <legacy product doc> docs/product/PROVIDER_MEDIATION.md
+mv <legacy product doc> docs/product/QUICKSTART.md
+mv <legacy product doc> docs/product/REDACTION_POLICY.md
+mv <legacy product doc> docs/product/RELEASE.md
+mv <legacy product doc> docs/product/SECURITY_GUARANTEES.md
+mv <legacy product doc> docs/product/SUPPORTED_HOSTS.md
 ```
 
 - [ ] **Step 2: Move architecture docs into `docs/architecture/`**
 
 ```bash
-mv docs/ARCHITECTURE.md docs/architecture/ARCHITECTURE.md
-mv docs/OPENCLAW.md docs/architecture/OPENCLAW.md
-mv docs/OPENCLAW_THREAT_NOTES.md docs/architecture/OPENCLAW_THREAT_NOTES.md
-mv docs/THREAT_MODEL.md docs/architecture/THREAT_MODEL.md
+mv <legacy architecture doc> docs/architecture/ARCHITECTURE.md
+mv <legacy architecture doc> docs/architecture/OPENCLAW.md
+mv <legacy architecture doc> docs/architecture/OPENCLAW_THREAT_NOTES.md
+mv <legacy architecture doc> docs/architecture/THREAT_MODEL.md
 ```
 
 - [ ] **Step 3: Move operations docs into `docs/operations/`**
 
 ```bash
-mv docs/OPERATIONS.md docs/operations/OPERATIONS.md
-mv docs/TROUBLESHOOTING.md docs/operations/TROUBLESHOOTING.md
+mv <legacy operations doc> docs/operations/OPERATIONS.md
+mv <legacy operations doc> docs/operations/TROUBLESHOOTING.md
 ```
 
 - [ ] **Step 4: Update README links to the new canonical locations**
@@ -307,40 +310,40 @@ git commit -m "docs: separate canonical docs by ownership"
 ### Task 3: Move Plans And Specs Into Version-Owned Folders
 
 **Files:**
-- Move: `docs/superpowers/plans/*`
-- Move: `docs/superpowers/specs/*`
+- Move: legacy plan artifacts
+- Move: legacy spec artifacts
 - Modify: `ROADMAP.md`
 - Modify: `docs/specs/2026-04-18-docs-information-architecture-design.md`
 
 - [ ] **Step 1: Move V2-V4 plan files into version buckets**
 
 ```bash
-mv docs/superpowers/plans/2026-04-16-v2-loop-0-truth-reset.md docs/plans/v2/
-mv docs/superpowers/plans/2026-04-17-v2-loop-1-secret-ingress-lockdown.md docs/plans/v2/
-mv docs/superpowers/plans/2026-04-17-v2-loop-2-provider-isolation-contract.md docs/plans/v2/
-mv docs/superpowers/plans/2026-04-17-v2-loop-3-execution-adapter-containment.md docs/plans/v2/
-mv docs/superpowers/plans/2026-04-17-v2-loop-4-capability-and-approval-hardening.md docs/plans/v2/
-mv docs/superpowers/plans/2026-04-17-v2-loop-5-memd-style-node-to-node-e2e-harness.md docs/plans/v2/
-mv docs/superpowers/plans/2026-04-17-v2-loop-6-v2-ship-gate.md docs/plans/v2/
-mv docs/superpowers/plans/2026-04-17-v3-loop-0-trusted-input-surface.md docs/plans/v3/
-mv docs/superpowers/plans/2026-04-17-v3-loop-1-transcript-and-log-redaction-pipeline.md docs/plans/v3/
-mv docs/superpowers/plans/2026-04-17-v3-loop-2-real-trusted-execution-adapters.md docs/plans/v3/
-mv docs/superpowers/plans/2026-04-17-v3-loop-3-multi-host-support-matrix.md docs/plans/v3/
-mv docs/superpowers/plans/2026-04-17-v3-loop-4-v3-ship-gate.md docs/plans/v3/
-mv docs/superpowers/plans/2026-04-17-v4-loop-0-policy-engine-maturity.md docs/plans/v4/
-mv docs/superpowers/plans/2026-04-17-v4-loop-1-attestation-and-runtime-identity.md docs/plans/v4/
-mv docs/superpowers/plans/2026-04-17-v4-loop-2-tamper-evident-operations-and-forensics.md docs/plans/v4/
-mv docs/superpowers/plans/2026-04-17-v4-loop-3-rotation-and-recovery-drills.md docs/plans/v4/
-mv docs/superpowers/plans/2026-04-17-v4-loop-4-adversarial-continuous-verification.md docs/plans/v4/
-mv docs/superpowers/plans/2026-04-17-v4-loop-5-platform-ship-gate.md docs/plans/v4/
-mv docs/superpowers/plans/2026-04-17-post-v4-vision-completion.md docs/plans/v5/
+mv <legacy plan file> docs/plans/v2/
+mv <legacy plan file> docs/plans/v2/
+mv <legacy plan file> docs/plans/v2/
+mv <legacy plan file> docs/plans/v2/
+mv <legacy plan file> docs/plans/v2/
+mv <legacy plan file> docs/plans/v2/
+mv <legacy plan file> docs/plans/v2/
+mv <legacy plan file> docs/plans/v3/
+mv <legacy plan file> docs/plans/v3/
+mv <legacy plan file> docs/plans/v3/
+mv <legacy plan file> docs/plans/v3/
+mv <legacy plan file> docs/plans/v3/
+mv <legacy plan file> docs/plans/v4/
+mv <legacy plan file> docs/plans/v4/
+mv <legacy plan file> docs/plans/v4/
+mv <legacy plan file> docs/plans/v4/
+mv <legacy plan file> docs/plans/v4/
+mv <legacy plan file> docs/plans/v4/
+mv <legacy plan file> docs/plans/v5/
 ```
 
 - [ ] **Step 2: Move spec files into `docs/specs/`**
 
 ```bash
-mv docs/superpowers/specs/2026-04-16-zero-trust-v2-v4-hardening-roadmap-design.md docs/specs/
-mv docs/superpowers/specs/2026-04-17-zero-trust-v2-v4-remaining-loop-spec-pack.md docs/specs/
+mv <legacy spec file> docs/specs/
+mv <legacy spec file> docs/specs/
 ```
 
 - [ ] **Step 3: Update roadmap and IA-spec references to the new locations**
@@ -352,8 +355,8 @@ mv docs/superpowers/specs/2026-04-17-zero-trust-v2-v4-remaining-loop-spec-pack.m
 
 - [ ] **Step 4: Verify there are no remaining active files in `docs/superpowers/plans` or `docs/superpowers/specs`**
 
-Run: `find docs/superpowers -maxdepth 2 -type f | sort`
-Expected: no active plan/spec files remain.
+Run: `find docs -maxdepth 3 -type f | sort`
+Expected: no active plan/spec files remain in legacy planning directories.
 
 - [ ] **Step 5: Commit the plan and spec migration**
 
@@ -424,33 +427,33 @@ git commit -m "docs: seed version backlog and remove legacy planning dirs"
 - [ ] **Step 1: Find all stale old-path references after the move**
 
 Run: `rg -n "docs/(ADAPTERS|ARCHITECTURE|IDENTITY_MODEL|INTEGRATION|OPENCLAW|OPENCLAW_THREAT_NOTES|OPERATIONS|PLATFORM_SUPPORT|PROVIDER_MEDIATION|QUICKSTART|REDACTION_POLICY|RELEASE|SECURITY_GUARANTEES|SUPPORTED_HOSTS|THREAT_MODEL|TROUBLESHOOTING)\\.md|docs/superpowers/(plans|specs)/" -g '*.md' -g 'ROADMAP.md' .`
-Expected: a finite list of stale references to patch.
+Expected: canonical references only.
 
 - [ ] **Step 2: Patch canonical references to the new folders**
 
 ```markdown
-docs/RELEASE.md                -> docs/product/RELEASE.md
-docs/SUPPORTED_HOSTS.md        -> docs/product/SUPPORTED_HOSTS.md
-docs/PLATFORM_SUPPORT.md       -> docs/product/PLATFORM_SUPPORT.md
-docs/SECURITY_GUARANTEES.md    -> docs/product/SECURITY_GUARANTEES.md
-docs/INTEGRATION.md            -> docs/product/INTEGRATION.md
-docs/IDENTITY_MODEL.md         -> docs/product/IDENTITY_MODEL.md
-docs/PROVIDER_MEDIATION.md     -> docs/product/PROVIDER_MEDIATION.md
-docs/REDACTION_POLICY.md       -> docs/product/REDACTION_POLICY.md
-docs/OPENCLAW.md               -> docs/architecture/OPENCLAW.md
-docs/OPENCLAW_THREAT_NOTES.md  -> docs/architecture/OPENCLAW_THREAT_NOTES.md
-docs/ARCHITECTURE.md           -> docs/architecture/ARCHITECTURE.md
-docs/THREAT_MODEL.md           -> docs/architecture/THREAT_MODEL.md
-docs/OPERATIONS.md             -> docs/operations/OPERATIONS.md
-docs/TROUBLESHOOTING.md        -> docs/operations/TROUBLESHOOTING.md
-docs/superpowers/plans/...     -> docs/plans/vX/...
-docs/superpowers/specs/...     -> docs/specs/...
+docs/product/RELEASE.md               is canonical
+docs/product/SUPPORTED_HOSTS.md       is canonical
+docs/product/PLATFORM_SUPPORT.md      is canonical
+docs/product/SECURITY_GUARANTEES.md   is canonical
+docs/product/INTEGRATION.md           is canonical
+docs/product/IDENTITY_MODEL.md        is canonical
+docs/product/PROVIDER_MEDIATION.md    is canonical
+docs/product/REDACTION_POLICY.md      is canonical
+docs/architecture/OPENCLAW.md         is canonical
+docs/architecture/OPENCLAW_THREAT_NOTES.md is canonical
+docs/architecture/ARCHITECTURE.md     is canonical
+docs/architecture/THREAT_MODEL.md     is canonical
+docs/operations/OPERATIONS.md         is canonical
+docs/operations/TROUBLESHOOTING.md    is canonical
+docs/plans/vX/...                     are version-owned
+docs/specs/...                        are canonical specs
 ```
 
 - [ ] **Step 3: Re-run the stale-reference search**
 
 Run: `rg -n "docs/superpowers/(plans|specs)/|docs/(ADAPTERS|ARCHITECTURE|IDENTITY_MODEL|INTEGRATION|OPENCLAW|OPENCLAW_THREAT_NOTES|OPERATIONS|PLATFORM_SUPPORT|PROVIDER_MEDIATION|QUICKSTART|REDACTION_POLICY|RELEASE|SECURITY_GUARANTEES|SUPPORTED_HOSTS|THREAT_MODEL|TROUBLESHOOTING)\\.md" -g '*.md' -g 'ROADMAP.md' .`
-Expected: zero results, or only intentional historical mentions in archived docs.
+Expected: zero results.
 
 - [ ] **Step 4: Commit the link repair pass**
 

@@ -16,8 +16,8 @@
 - Modify: `src/handlers/requests.rs`
 - Modify: `src/lib.rs`
 - Modify: `README.md`
-- Modify: `docs/INTEGRATION.md`
-- Modify: `docs/OPENCLAW.md`
+- Modify: `docs/product/INTEGRATION.md`
+- Modify: `docs/architecture/OPENCLAW.md`
 
 ## Task 1: Add Secret Ref Validation Heuristics
 
@@ -431,8 +431,8 @@ Expected:
 
 **Files:**
 - Modify: `README.md`
-- Modify: `docs/INTEGRATION.md`
-- Modify: `docs/OPENCLAW.md`
+- Modify: `docs/product/INTEGRATION.md`
+- Modify: `docs/architecture/OPENCLAW.md`
 
 - [ ] **Step 1: Add explicit Loop 1 contract language to the README**
 
@@ -446,7 +446,7 @@ In `README.md`, update the request-contract language so it says opaque refs are 
 
 - [ ] **Step 2: Tighten the integration guidance for host apps**
 
-In `docs/INTEGRATION.md`, replace any soft language about opaque refs with this stricter contract block:
+In `docs/product/INTEGRATION.md`, replace any soft language about opaque refs with this stricter contract block:
 
 ```markdown
 ## Secret ingress contract
@@ -458,7 +458,7 @@ In `docs/INTEGRATION.md`, replace any soft language about opaque refs with this 
 
 - [ ] **Step 3: Tighten the OpenClaw host guidance the same way**
 
-In `docs/OPENCLAW.md`, add or replace the host-contract bullets with:
+In `docs/architecture/OPENCLAW.md`, add or replace the host-contract bullets with:
 
 ```markdown
 - Never send raw secret values to the broker.
@@ -472,8 +472,8 @@ Run:
 
 ```bash
 sed -n '1,220p' README.md
-sed -n '1,220p' docs/INTEGRATION.md
-sed -n '1,220p' docs/OPENCLAW.md
+sed -n '1,220p' docs/product/INTEGRATION.md
+sed -n '1,220p' docs/architecture/OPENCLAW.md
 ```
 
 Expected:
@@ -486,7 +486,7 @@ Expected:
 Run:
 
 ```bash
-git add README.md docs/INTEGRATION.md docs/OPENCLAW.md
+git add README.md docs/product/INTEGRATION.md docs/architecture/OPENCLAW.md
 git commit -m "docs: document opaque secret ingress contract"
 ```
 
@@ -540,7 +540,7 @@ Run:
 
 ```bash
 git diff --stat HEAD~4..HEAD
-git diff -- src/policy.rs src/handlers/requests.rs src/lib.rs README.md docs/INTEGRATION.md docs/OPENCLAW.md
+git diff -- src/policy.rs src/handlers/requests.rs src/lib.rs README.md docs/product/INTEGRATION.md docs/architecture/OPENCLAW.md
 ```
 
 Expected:
@@ -553,7 +553,7 @@ Expected:
 Run:
 
 ```bash
-git add src/policy.rs src/handlers/requests.rs src/lib.rs README.md docs/INTEGRATION.md docs/OPENCLAW.md
+git add src/policy.rs src/handlers/requests.rs src/lib.rs README.md docs/product/INTEGRATION.md docs/architecture/OPENCLAW.md
 git commit -m "chore: finish loop 1 verification sweep"
 ```
 

@@ -12,26 +12,26 @@
 
 ## File Structure
 
-- Create: `docs/SECURITY_GUARANTEES.md`
+- Create: `docs/product/SECURITY_GUARANTEES.md`
 - Create: `scripts/check-security-claims.sh`
 - Modify: `README.md`
-- Modify: `docs/ARCHITECTURE.md`
-- Modify: `docs/THREAT_MODEL.md`
-- Modify: `docs/INTEGRATION.md`
-- Modify: `docs/OPENCLAW.md`
-- Modify: `docs/QUICKSTART.md`
-- Modify: `docs/RELEASE.md`
+- Modify: `docs/architecture/ARCHITECTURE.md`
+- Modify: `docs/architecture/THREAT_MODEL.md`
+- Modify: `docs/product/INTEGRATION.md`
+- Modify: `docs/architecture/OPENCLAW.md`
+- Modify: `docs/product/QUICKSTART.md`
+- Modify: `docs/product/RELEASE.md`
 - Modify: `.github/workflows/ci.yml`
 
 ## Task 1: Add The Security Guarantees Matrix
 
 **Files:**
-- Create: `docs/SECURITY_GUARANTEES.md`
+- Create: `docs/product/SECURITY_GUARANTEES.md`
 - Modify: `README.md`
 
 - [ ] **Step 1: Create the guarantees matrix document**
 
-Write `docs/SECURITY_GUARANTEES.md` with this exact content:
+Write `docs/product/SECURITY_GUARANTEES.md` with this exact content:
 
 ```markdown
 # Security Guarantees
@@ -84,7 +84,7 @@ If docs, code, or tests drift, reduce the claim. Do not expand the claim before 
 Run:
 
 ```bash
-sed -n '1,220p' docs/SECURITY_GUARANTEES.md
+sed -n '1,220p' docs/product/SECURITY_GUARANTEES.md
 ```
 
 Expected:
@@ -118,7 +118,7 @@ Allow Claude, Codex, OpenClaw, and other agents to request secret-dependent acti
 
 The current line provides **broker-level no-plaintext-response guarantees**. It does **not** yet provide a complete end-to-end transcript-safe zero-trust system for external host apps.
 
-Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying on any security property.
+Read [docs/product/SECURITY_GUARANTEES.md](docs/product/SECURITY_GUARANTEES.md) before relying on any security property.
 ```
 
 - [ ] **Step 4: Re-read the README introduction to verify the claim is narrower and explicit**
@@ -131,7 +131,7 @@ sed -n '1,40p' README.md
 
 Expected:
 - the phrase `zero-trust secret broker for agents` is gone from the opening paragraph
-- the README now points readers to `docs/SECURITY_GUARANTEES.md`
+- the README now points readers to `docs/product/SECURITY_GUARANTEES.md`
 - the README explicitly says end-to-end transcript-safe guarantees do not exist yet
 
 - [ ] **Step 5: Commit the guarantees matrix and README truth reset**
@@ -139,7 +139,7 @@ Expected:
 Run:
 
 ```bash
-git add docs/SECURITY_GUARANTEES.md README.md
+git add docs/product/SECURITY_GUARANTEES.md README.md
 git commit -m "docs: add security guarantees matrix"
 ```
 
@@ -150,7 +150,7 @@ Expected:
 
 **Files:**
 - Modify: `README.md`
-- Modify: `docs/ARCHITECTURE.md`
+- Modify: `docs/architecture/ARCHITECTURE.md`
 
 - [ ] **Step 1: Replace the README security model bullets**
 
@@ -194,7 +194,7 @@ with:
 
 - [ ] **Step 3: Rewrite the architecture doc so it distinguishes current state from target state**
 
-Replace all content in `docs/ARCHITECTURE.md` with:
+Replace all content in `docs/architecture/ARCHITECTURE.md` with:
 
 ```markdown
 # Architecture
@@ -229,7 +229,7 @@ Replace all content in `docs/ARCHITECTURE.md` with:
 Run:
 
 ```bash
-sed -n '1,200p' docs/ARCHITECTURE.md
+sed -n '1,200p' docs/architecture/ARCHITECTURE.md
 ```
 
 Expected:
@@ -241,7 +241,7 @@ Expected:
 Run:
 
 ```bash
-git add README.md docs/ARCHITECTURE.md
+git add README.md docs/architecture/ARCHITECTURE.md
 git commit -m "docs: narrow architecture and security claims"
 ```
 
@@ -251,12 +251,12 @@ Expected:
 ## Task 3: Reset The Threat Model And Release Gate
 
 **Files:**
-- Modify: `docs/THREAT_MODEL.md`
-- Modify: `docs/RELEASE.md`
+- Modify: `docs/architecture/THREAT_MODEL.md`
+- Modify: `docs/product/RELEASE.md`
 
 - [ ] **Step 1: Expand the threat model with explicit transcript and claim-gap language**
 
-Replace all content in `docs/THREAT_MODEL.md` with:
+Replace all content in `docs/architecture/THREAT_MODEL.md` with:
 
 ```markdown
 # Threat Model
@@ -319,7 +319,7 @@ This repo is intended to evolve into an end-to-end zero-trust secret-use system.
 
 - [ ] **Step 2: Tighten the release checklist to require the new claim audit**
 
-Replace all content in `docs/RELEASE.md` with:
+Replace all content in `docs/product/RELEASE.md` with:
 
 ```markdown
 # Release Checklist
@@ -332,7 +332,7 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Confirm `LICENSE` is Apache 2.0
 - Confirm `.env.example` is present and real secrets are not committed
 - Run `bash scripts/check-security-claims.sh`
-- Confirm `docs/SECURITY_GUARANTEES.md` matches the current implementation line
+- Confirm `docs/product/SECURITY_GUARANTEES.md` matches the current implementation line
 - Confirm docs distinguish broker-level guarantees from end-to-end host guarantees
 - Confirm release notes do not claim transcript-safe integrations unless backed by passing end-to-end tests
 
@@ -378,7 +378,7 @@ Windows is supported, but it is not the primary release target.
 Run:
 
 ```bash
-git diff -- docs/THREAT_MODEL.md docs/RELEASE.md
+git diff -- docs/architecture/THREAT_MODEL.md docs/product/RELEASE.md
 ```
 
 Expected:
@@ -390,7 +390,7 @@ Expected:
 Run:
 
 ```bash
-git add docs/THREAT_MODEL.md docs/RELEASE.md
+git add docs/architecture/THREAT_MODEL.md docs/product/RELEASE.md
 git commit -m "docs: reset threat model and release gate"
 ```
 
@@ -400,13 +400,13 @@ Expected:
 ## Task 4: Reset Host-Facing Integration Docs
 
 **Files:**
-- Modify: `docs/INTEGRATION.md`
-- Modify: `docs/OPENCLAW.md`
-- Modify: `docs/QUICKSTART.md`
+- Modify: `docs/product/INTEGRATION.md`
+- Modify: `docs/architecture/OPENCLAW.md`
+- Modify: `docs/product/QUICKSTART.md`
 
 - [ ] **Step 1: Rewrite the integration guide around supported versus unsupported flows**
 
-Replace all content in `docs/INTEGRATION.md` with:
+Replace all content in `docs/product/INTEGRATION.md` with:
 
 ```markdown
 # Integration Guide
@@ -464,7 +464,7 @@ Treat any OpenClaw-like host app as an untrusted runtime:
 
 - [ ] **Step 2: Rewrite the OpenClaw doc as an untrusted-host contract, not a finished zero-trust integration**
 
-Replace all content in `docs/OPENCLAW.md` with:
+Replace all content in `docs/architecture/OPENCLAW.md` with:
 
 ```markdown
 # OpenClaw Integration
@@ -509,7 +509,7 @@ This doc describes the intended broker contract for OpenClaw-like host apps. It 
 
 - [ ] **Step 3: Rewrite the quickstart so it warns against chat-based secret entry**
 
-Replace all content in `docs/QUICKSTART.md` with:
+Replace all content in `docs/product/QUICKSTART.md` with:
 
 ```markdown
 # Quickstart
@@ -594,7 +594,7 @@ Use this flow for current broker-level guarantees:
 Run:
 
 ```bash
-rg -n "transcript-safe|Do \\*\\*not\\*\\* type secrets into prompts|does not certify current end-to-end transcript safety|Broker API responses do not return plaintext secret values" docs/INTEGRATION.md docs/OPENCLAW.md docs/QUICKSTART.md
+rg -n "transcript-safe|Do \\*\\*not\\*\\* type secrets into prompts|does not certify current end-to-end transcript safety|Broker API responses do not return plaintext secret values" docs/product/INTEGRATION.md docs/architecture/OPENCLAW.md docs/product/QUICKSTART.md
 ```
 
 Expected:
@@ -606,7 +606,7 @@ Expected:
 Run:
 
 ```bash
-git add docs/INTEGRATION.md docs/OPENCLAW.md docs/QUICKSTART.md
+git add docs/product/INTEGRATION.md docs/architecture/OPENCLAW.md docs/product/QUICKSTART.md
 git commit -m "docs: reset host integration contract"
 ```
 
@@ -618,7 +618,7 @@ Expected:
 **Files:**
 - Create: `scripts/check-security-claims.sh`
 - Modify: `.github/workflows/ci.yml`
-- Modify: `docs/RELEASE.md`
+- Modify: `docs/product/RELEASE.md`
 
 - [ ] **Step 1: Create the claim audit script**
 
@@ -633,17 +633,17 @@ fail() {
   exit 1
 }
 
-[[ -f docs/SECURITY_GUARANTEES.md ]] || fail "missing docs/SECURITY_GUARANTEES.md"
+[[ -f docs/product/SECURITY_GUARANTEES.md ]] || fail "missing docs/product/SECURITY_GUARANTEES.md"
 
 grep -Fq "broker-level no-plaintext-response guarantees" README.md || fail "README missing narrowed guarantee"
 grep -Fq "does **not** yet provide a complete end-to-end transcript-safe zero-trust system" README.md || fail "README missing transcript-safe disclaimer"
-grep -Fq "Current implemented boundary" docs/ARCHITECTURE.md || fail "ARCHITECTURE missing current boundary section"
-grep -Fq "No current guarantee of transcript-safe host behavior" docs/ARCHITECTURE.md || fail "ARCHITECTURE missing transcript disclaimer"
-grep -Fq "What this repo does not solve yet" docs/THREAT_MODEL.md || fail "THREAT_MODEL missing current gap section"
-grep -Fq "Run \`bash scripts/check-security-claims.sh\`" docs/RELEASE.md || fail "RELEASE missing claim audit step"
-grep -Fq "The current repo guarantees broker-level masked responses. It does **not** yet guarantee transcript-safe host behavior." docs/INTEGRATION.md || fail "INTEGRATION missing host disclaimer"
-grep -Fq "It does not certify current end-to-end transcript safety." docs/OPENCLAW.md || fail "OPENCLAW missing disclaimer"
-grep -Fq "Do **not** type secrets into prompts, chat boxes, or task memory" docs/QUICKSTART.md || fail "QUICKSTART missing prompt-entry warning"
+grep -Fq "Current implemented boundary" docs/architecture/ARCHITECTURE.md || fail "ARCHITECTURE missing current boundary section"
+grep -Fq "No current guarantee of transcript-safe host behavior" docs/architecture/ARCHITECTURE.md || fail "ARCHITECTURE missing transcript disclaimer"
+grep -Fq "What this repo does not solve yet" docs/architecture/THREAT_MODEL.md || fail "THREAT_MODEL missing current gap section"
+grep -Fq "Run \`bash scripts/check-security-claims.sh\`" docs/product/RELEASE.md || fail "RELEASE missing claim audit step"
+grep -Fq "The current repo guarantees broker-level masked responses. It does **not** yet guarantee transcript-safe host behavior." docs/product/INTEGRATION.md || fail "INTEGRATION missing host disclaimer"
+grep -Fq "It does not certify current end-to-end transcript safety." docs/architecture/OPENCLAW.md || fail "OPENCLAW missing disclaimer"
+grep -Fq "Do **not** type secrets into prompts, chat boxes, or task memory" docs/product/QUICKSTART.md || fail "QUICKSTART missing prompt-entry warning"
 
 echo "claim-audit: ok"
 ```
@@ -705,7 +705,7 @@ Expected:
 Run:
 
 ```bash
-git add scripts/check-security-claims.sh .github/workflows/ci.yml docs/RELEASE.md
+git add scripts/check-security-claims.sh .github/workflows/ci.yml docs/product/RELEASE.md
 git commit -m "ci: audit security claims in docs"
 ```
 

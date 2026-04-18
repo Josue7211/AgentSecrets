@@ -39,22 +39,22 @@ The repo works, but the docs system does not scale cleanly into `V5` through `V1
 
 Current root docs are flat:
 
-- `docs/ADAPTERS.md`
-- `docs/ARCHITECTURE.md`
-- `docs/IDENTITY_MODEL.md`
-- `docs/INTEGRATION.md`
-- `docs/OPENCLAW.md`
-- `docs/OPENCLAW_THREAT_NOTES.md`
-- `docs/OPERATIONS.md`
-- `docs/PLATFORM_SUPPORT.md`
-- `docs/PROVIDER_MEDIATION.md`
-- `docs/QUICKSTART.md`
-- `docs/REDACTION_POLICY.md`
-- `docs/RELEASE.md`
-- `docs/SECURITY_GUARANTEES.md`
-- `docs/SUPPORTED_HOSTS.md`
-- `docs/THREAT_MODEL.md`
-- `docs/TROUBLESHOOTING.md`
+- `docs/product/ADAPTERS.md`
+- `docs/architecture/ARCHITECTURE.md`
+- `docs/product/IDENTITY_MODEL.md`
+- `docs/product/INTEGRATION.md`
+- `docs/architecture/OPENCLAW.md`
+- `docs/architecture/OPENCLAW_THREAT_NOTES.md`
+- `docs/operations/OPERATIONS.md`
+- `docs/product/PLATFORM_SUPPORT.md`
+- `docs/product/PROVIDER_MEDIATION.md`
+- `docs/product/QUICKSTART.md`
+- `docs/product/REDACTION_POLICY.md`
+- `docs/product/RELEASE.md`
+- `docs/product/SECURITY_GUARANTEES.md`
+- `docs/product/SUPPORTED_HOSTS.md`
+- `docs/architecture/THREAT_MODEL.md`
+- `docs/operations/TROUBLESHOOTING.md`
 
 Current planning artifacts live under:
 
