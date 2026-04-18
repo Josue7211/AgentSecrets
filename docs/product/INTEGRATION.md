@@ -16,7 +16,7 @@ Flow:
 
 The current repo guarantees broker-level masked responses and a broker-owned trusted-input session path for supported hosts. It does **not** yet guarantee universal transcript-safe host behavior.
 The local node-to-node harness now covers both the stubbed broker request flow and the trusted-input ingress path. The helper used in that harness also has tested transcript and log redaction coverage for seeded canaries and provider refs. That evidence is still not the same thing as supported-host certification.
-Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) to decide which hosts are actually release-eligible for V3 end-to-end claims.
+Use [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) to decide which hosts are actually release-eligible for V3 end-to-end claims.
 
 ## Provider mediation contract
 
@@ -42,9 +42,9 @@ The supported V2 topology is narrow and should remain that way at release time:
 - audit export must come from `/v1/audit` or backed-up broker artifacts, not from host chat logs
 - key handling must preserve role separation and keep rotated keys out of prompts, chat boxes, and task memory
 
-Release operators should review this section together with the support and claims matrices in [docs/RELEASE.md](docs/RELEASE.md).
-V3 operators must also review [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) before making any host-specific safety claim.
-V4 operators must also review [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) before making platform-level trust claims.
+Release operators should review this section together with the support and claims matrices in [docs/product/RELEASE.md](docs/product/RELEASE.md).
+V3 operators must also review [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) before making any host-specific safety claim.
+V4 operators must also review [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) before making platform-level trust claims.
 
 ## Secret ingress contract
 
@@ -114,13 +114,13 @@ Treat any OpenClaw-like host app as an untrusted runtime unless it is the docume
 - Restrict host egress so it can only reach the broker and allowed APIs.
 - Do not let the host app talk directly to Bitwarden.
 - If the host wants transcript-safer ingress, keep plaintext entry inside the trusted-input completion path and return only the broker opaque ref to the agent-visible runtime.
-- If the host also claims transcript or log redaction, define sink classification and fail-closed behavior explicitly. Use [docs/REDACTION_POLICY.md](docs/REDACTION_POLICY.md) as the current repo-owned example and [docs/OPENCLAW_THREAT_NOTES.md](docs/OPENCLAW_THREAT_NOTES.md) for the documented OpenClaw sink model.
+- If the host also claims transcript or log redaction, define sink classification and fail-closed behavior explicitly. Use [docs/product/REDACTION_POLICY.md](docs/product/REDACTION_POLICY.md) as the current repo-owned example and [docs/architecture/OPENCLAW_THREAT_NOTES.md](docs/architecture/OPENCLAW_THREAT_NOTES.md) for the documented OpenClaw sink model.
 - If `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub`, hosts on the baseline path must attach signed identity headers for runtime, host, adapter, timestamp, and signature.
 - If `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed`, hosts on that deployment baseline must also send `x-secret-broker-attestation-id` and must be signed with the configured host-specific key.
 - Host-signed envelope replay rejection is currently same-process only. Do not treat it as durable across broker restart.
 - Do not claim transcript safety beyond the tested path unless an end-to-end test proves it for that host.
 - Keep trusted-side provider placement and trusted execution adapter placement beside the broker, not inside the host runtime.
-- OpenClaw remains the preview host exception only for the documented broker HTTP path in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
+- OpenClaw remains the preview host exception only for the documented broker HTTP path in [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md).
 - Other OpenClaw-like runtimes remain untrusted until they have their own host-specific evidence.
 
 ## Recommended rollout
@@ -130,6 +130,6 @@ Treat any OpenClaw-like host app as an untrusted runtime unless it is the docume
 3. `SECRET_BROKER_MODE=enforce`
 4. Add trusted provider and execution boundaries before expanding security claims
 5. Keep `bash scripts/run-e2e-harness.sh` green before claiming the stubbed V2 flow is defended end to end at the local process-boundary level
-6. Use the V2 ship gate in [docs/RELEASE.md](docs/RELEASE.md#v2-ship-gate) before any V2 release note or deployment claim
-7. Use the V3 ship gate in [docs/RELEASE.md](docs/RELEASE.md#v3-ship-gate) plus [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) before any V3 supported-host claim
-8. Use the V4 ship gate in [docs/RELEASE.md](docs/RELEASE.md#v4-ship-gate) plus [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) before any V4 platform claim
+6. Use the V2 ship gate in [docs/product/RELEASE.md](docs/product/RELEASE.md#v2-ship-gate) before any V2 release note or deployment claim
+7. Use the V3 ship gate in [docs/product/RELEASE.md](docs/product/RELEASE.md#v3-ship-gate) plus [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) before any V3 supported-host claim
+8. Use the V4 ship gate in [docs/product/RELEASE.md](docs/product/RELEASE.md#v4-ship-gate) plus [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) before any V4 platform claim

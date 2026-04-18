@@ -17,8 +17,8 @@ Use this when publishing the repo, cutting a tag, or deploying a new host.
 - Run `bash scripts/check-v4-ship-gate.sh`
 - Run `bash scripts/run-rotation-recovery-drills.sh`
 - Run `bash scripts/run-adversarial-suite.sh pr`
-- Confirm [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md) matches the runtime identity tier actually configured for release
-- Confirm `docs/SECURITY_GUARANTEES.md` matches the current implementation line
+- Confirm [docs/product/IDENTITY_MODEL.md](docs/product/IDENTITY_MODEL.md) matches the runtime identity tier actually configured for release
+- Confirm `docs/product/SECURITY_GUARANTEES.md` matches the current implementation line
 - Confirm docs distinguish broker-level guarantees from end-to-end host guarantees
 - Treat a failing or skipped Loop 5 harness run as a V2 release blocker
 - Confirm release notes do not claim transcript-safe integrations unless backed by passing end-to-end tests
@@ -55,13 +55,13 @@ Call V3 real only when every Loop 0 through Loop 4 line below is backed by curre
 | Loop 0 | trusted-input sessions mint one-time broker opaque refs and keep plaintext out of the agent-visible request path | `cargo test --all-targets --all-features -- --nocapture` |
 | Loop 1 | supported-host helper and preview OpenClaw transcript and log redaction remain fail-closed and green | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
 | Loop 2 | sanctioned adapter registry supports the documented helper paths and the preview OpenClaw host path without exposing plaintext | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh`, `bash scripts/run-openclaw-e2e.sh` |
-| Loop 3 | supported hosts and excluded hosts are truthful in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) | `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` |
+| Loop 3 | supported hosts and excluded hosts are truthful in [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) | `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` |
 | Loop 4 | release notes and release docs limit V3 claims to shipped hosts with current evidence | `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` |
 
 V3 release authority is the combination of:
 
 - green shared checklist evidence
-- the [supported host matrix](docs/SUPPORTED_HOSTS.md)
+- the [supported host matrix](docs/product/SUPPORTED_HOSTS.md)
 - the [V3 release-note claims table](#v3-release-note-claims-table)
 - completed [V3 manual signoff](#v3-manual-signoff)
 
@@ -71,7 +71,7 @@ Call the external-host ship gate before any release or claim that mentions a shi
 
 - `bash scripts/check-external-host-ship-gate.sh`
 
-The gate is the release truth for [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
+The gate is the release truth for [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md).
 
 - It fails if any `shipped` host is missing current trusted-input, transcript/log redaction, adapter, identity, or known-limit evidence.
 - It fails if a shipped host's evidence is stale and downgrades that host to `preview` until the row is refreshed.
@@ -109,7 +109,7 @@ Use this table verbatim or keep release notes materially equivalent.
 
 | Claim line | Status | Evidence | Required caveat |
 | --- | --- | --- | --- |
-| Supported hosts can use broker-owned trusted-input sessions to keep plaintext out of the agent-visible request path | allowed | `cargo test --all-targets --all-features -- --nocapture` | This is still bounded to the hosts and paths listed in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) |
+| Supported hosts can use broker-owned trusted-input sessions to keep plaintext out of the agent-visible request path | allowed | `cargo test --all-targets --all-features -- --nocapture` | This is still bounded to the hosts and paths listed in [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) |
 | The local helper harness path supports masked `password_fill`, `request_sign`, and `credential_handoff` flows without exposing plaintext to helper transcripts or artifacts | allowed | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; `request_sign` uses the bounded production adapter mode while `password_fill` and `credential_handoff` remain preview-only |
 | OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | blocked | `bash scripts/run-openclaw-e2e.sh`, `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` | Keep OpenClaw preview until Task 2 adds host-specific identity evidence |
 | Claude, Codex, or arbitrary external runtimes are certified transcript-safe V3 hosts | blocked | none in this repo | Remove this line from V3 release notes |
@@ -120,10 +120,10 @@ Use this table verbatim or keep release notes materially equivalent.
 Both signoffs are required before tagging or deployment:
 
 - Claims review signoff:
-  - confirm `docs/SECURITY_GUARANTEES.md`, this release checklist, and release notes all say the same thing
+  - confirm `docs/product/SECURITY_GUARANTEES.md`, this release checklist, and release notes all say the same thing
   - confirm every preview or unsupported path stays out of the shipped V2 claim set
 - Deployment topology review signoff:
-  - confirm the planned topology matches [docs/INTEGRATION.md](docs/INTEGRATION.md#supported-v2-topology)
+  - confirm the planned topology matches [docs/product/INTEGRATION.md](docs/product/INTEGRATION.md#supported-v2-topology)
   - confirm private-network placement, trusted-side provider placement, log handling, audit export, and key separation are all still true
 
 If either signoff fails, block the V2 release or downgrade it to preview.
@@ -133,11 +133,11 @@ If either signoff fails, block the V2 release or downgrade it to preview.
 Both signoffs are required before tagging or deployment:
 
 - Host matrix review signoff:
-  - confirm [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) matches the current host evidence
+  - confirm [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) matches the current host evidence
   - confirm every `shipped` host has current trusted-input, transcript/log, adapter, identity, and known-limit evidence
   - confirm every preview or unsupported host stays out of the V3 claim set
 - Claims and regression review signoff:
-  - confirm `docs/SECURITY_GUARANTEES.md`, this release checklist, and release notes all say the same thing
+  - confirm `docs/product/SECURITY_GUARANTEES.md`, this release checklist, and release notes all say the same thing
   - confirm host-version or integration-path drift has been reviewed for every shipped host
 
 If either signoff fails, block the V3 release or downgrade it to preview.
@@ -158,7 +158,7 @@ Call V4 real only when every Loop 0 through Loop 5 line below is backed by curre
 V4 release authority is the combination of:
 
 - green shared checklist evidence
-- [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md)
+- [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md)
 - the [V4 platform claims table](#v4-platform-claims-table)
 - completed [V4 manual signoff](#v4-manual-signoff)
 
@@ -177,8 +177,8 @@ V4 release authority is the combination of:
 ## V4 manual signoff
 
 - Platform support review signoff:
-  - confirm [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) matches current evidence
-  - confirm [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md) matches the configured identity tier and host requirements
+  - confirm [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) matches current evidence
+  - confirm [docs/product/IDENTITY_MODEL.md](docs/product/IDENTITY_MODEL.md) matches the configured identity tier and host requirements
   - confirm shipped, preview, deprecated, and unsupported statements are still truthful
 - Continuous evidence review signoff:
   - confirm adversarial PR lane is green

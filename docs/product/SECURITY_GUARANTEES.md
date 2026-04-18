@@ -61,8 +61,8 @@ For that same preview OpenClaw path, the broker can now require a deployment-wid
 The repo also now supports a narrow Bitwarden production provider mediation path on the trusted side. That path resolves opaque `bw://...` refs without exposing provider credentials or plaintext secret material to the host-visible request path, and it audits the documented failure cases.
 Stronger per-host tiers above a weaker deployment baseline are not a supported secure shape in this repo. Startup rejects that configuration.
 Those claims do not automatically extend to external host apps.
-Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only host-certification authority for V3 claims.
-Use [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) as the only V4 control and claim authority.
+Use [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) as the only host-certification authority for V3 claims.
+Use [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) as the only V4 control and claim authority.
 
 ## Unsafe patterns
 

@@ -1,6 +1,6 @@
 # Platform Support Matrix
 
-This document is the V4 platform-support source of truth. V3 host status still comes from [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) and `scripts/check-external-host-ship-gate.sh`.
+This document is the V4 platform-support source of truth. V3 host status still comes from [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) and `scripts/check-external-host-ship-gate.sh`.
 
 ## Control matrix
 

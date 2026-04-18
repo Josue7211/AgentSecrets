@@ -9,10 +9,10 @@ Allow Claude, Codex, OpenClaw, and other agents to request secret-dependent acti
 
 The current implementation provides **broker-level no-plaintext-response guarantees** and a **broker-owned trusted-input session path** that can mint opaque refs for supported hosts. It still does **not** yet provide a complete end-to-end transcript-safe zero-trust system for arbitrary external host apps.
 
-Read [docs/SECURITY_GUARANTEES.md](docs/SECURITY_GUARANTEES.md) before relying on any security property.
-Read [docs/REDACTION_POLICY.md](docs/REDACTION_POLICY.md) for the current supported-host transcript and log redaction boundary.
-Read [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) for the current V3 host-certification boundary.
-Read [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) for the current V4 control and support boundary.
+Read [docs/product/SECURITY_GUARANTEES.md](docs/product/SECURITY_GUARANTEES.md) before relying on any security property.
+Read [docs/product/REDACTION_POLICY.md](docs/product/REDACTION_POLICY.md) for the current supported-host transcript and log redaction boundary.
+Read [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) for the current V3 host-certification boundary.
+Read [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) for the current V4 control and support boundary.
 
 ## Production-grade defaults
 - Role-separated API keys (`client` and `approver`)
@@ -151,17 +151,17 @@ Cross-platform deployment:
     - [launchd/com.secret-broker.plist](launchd/com.secret-broker.plist)
 - Secondary platform:
   - Windows:
-    - [docs/OPERATIONS.md](docs/OPERATIONS.md#windows-service)
+    - [docs/operations/OPERATIONS.md](docs/operations/OPERATIONS.md#windows-service)
     - [windows/install-secret-broker.ps1](windows/install-secret-broker.ps1)
 - Release checklist:
-  - [docs/RELEASE.md](docs/RELEASE.md)
+  - [docs/product/RELEASE.md](docs/product/RELEASE.md)
   - includes the V2, V3, and V4 ship gates, claims tables, and manual signoff
 - Quickstart:
-  - [docs/QUICKSTART.md](docs/QUICKSTART.md)
+  - [docs/product/QUICKSTART.md](docs/product/QUICKSTART.md)
 - Threat model:
-  - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
+  - [docs/architecture/THREAT_MODEL.md](docs/architecture/THREAT_MODEL.md)
 - Troubleshooting:
-  - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+  - [docs/operations/TROUBLESHOOTING.md](docs/operations/TROUBLESHOOTING.md)
 
 Container:
 ```bash
@@ -217,7 +217,7 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 6. Agent executes with capability (`POST /v1/execute`) and must present the approved `action` and `target`.
 7. Broker returns masked execution result only, including masked adapter summaries when the trusted adapter registry is enabled.
 8. Local harness evidence now proves the stubbed broker flow, the trusted-input ingress path, and the sanctioned helper adapter paths stay free of plaintext secret material in untrusted helper transcripts and redacted artifacts.
-9. Any broader host transcript or chatbox safety claim still depends on the specific host integration and its certification status in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md).
+9. Any broader host transcript or chatbox safety claim still depends on the specific host integration and its certification status in [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md).
 
 ## Integration notes
 - Any OpenClaw, Claude, Codex, or custom agent runtime should call broker instead of direct secret routes.
@@ -228,14 +228,14 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 - The repo now has a trusted-side provider boundary in stub form.
 - The repo now has a trusted-side sanctioned adapter registry in stub form for masked `password_fill`, `request_sign`, and `credential_handoff`.
 - The repo now has a broker-owned trusted input surface for supported hosts, but still does **not** claim production Bitwarden mediation, real browser automation, or universal transcript-safe host execution.
-- Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only V3 host-certification source of truth.
-- See [docs/OPENCLAW.md](docs/OPENCLAW.md) for the generic OpenClaw drop-in contract.
+- Use [docs/product/SUPPORTED_HOSTS.md](docs/product/SUPPORTED_HOSTS.md) as the only V3 host-certification source of truth.
+- See [docs/architecture/OPENCLAW.md](docs/architecture/OPENCLAW.md) for the generic OpenClaw drop-in contract.
 
 ## Platform support
 - The broker binary is intended to run on Linux and macOS first.
 - Linux gets `systemd` examples because that is the simplest self-hosted path.
 - macOS uses `launchd`.
-- Windows remains supported, but as a secondary path; see [docs/OPERATIONS.md](docs/OPERATIONS.md#windows-service).
+- Windows remains supported, but as a secondary path; see [docs/operations/OPERATIONS.md](docs/operations/OPERATIONS.md#windows-service).
 - If your OpenClaw setup is remote, keep the broker private-network only and let the host app talk to the broker over HTTP.
 
 ## Production checklist
@@ -246,8 +246,8 @@ sudo systemctl enable --now secret-broker.service secret-broker-backup.timer
 - Set strict `SECRET_BROKER_ALLOWED_TARGET_PREFIXES`
 - Set conservative `SECRET_BROKER_MAX_AMOUNT_CENTS`
 - Monitor `/v1/audit` and export logs
-- Use [operations runbook](docs/OPERATIONS.md)
+- Use [operations runbook](docs/operations/OPERATIONS.md)
 - Keep CI required on pull requests [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 - Rotate keys through `/v1/admin/keys/:role/rotate` instead of editing env files in place
-- Use [docs/RELEASE.md](docs/RELEASE.md) as the only V2 and V3 ship authority
-- Use [docs/RELEASE.md](docs/RELEASE.md) and [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) as the only V4 platform ship authority
+- Use [docs/product/RELEASE.md](docs/product/RELEASE.md) as the only V2 and V3 ship authority
+- Use [docs/product/RELEASE.md](docs/product/RELEASE.md) and [docs/product/PLATFORM_SUPPORT.md](docs/product/PLATFORM_SUPPORT.md) as the only V4 platform ship authority
