@@ -538,6 +538,35 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
         );
     }
 
+    match cfg.identity_verification_mode {
+        identity::IdentityVerificationMode::Off => {}
+        identity::IdentityVerificationMode::Stub => {}
+        identity::IdentityVerificationMode::HostSigned => {
+            if cfg.identity_host_signing_keys.is_empty() {
+                anyhow::bail!(
+                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS"
+                );
+            }
+            if cfg.trusted_host_runtime_pairs.is_empty() {
+                anyhow::bail!(
+                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS"
+                );
+            }
+            if !cfg
+                .identity_host_signing_keys
+                .keys()
+                .any(|host_id| cfg.trusted_host_runtime_pairs.contains_key(host_id))
+            {
+                anyhow::bail!(
+                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires at least one host present in both SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS and SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS"
+                );
+            }
+        }
+        identity::IdentityVerificationMode::HardwareBacked => {
+            anyhow::bail!("hardware-backed identity is not implemented")
+        }
+    }
+
     for (host_id, required_mode) in &cfg.required_host_identity_modes {
         match required_mode {
             identity::IdentityVerificationMode::Off => {}
@@ -2813,6 +2842,38 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn health_reports_identity_override_picture() -> anyhow::Result<()> {
+        let (app, _cfg) = setup_app_with_identity_mode(
+            crate::provider::ProviderBridgeMode::Off,
+            "off",
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+        )
+        .await?;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/healthz")
+            .body(Body::empty())?;
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_response(resp).await;
+        assert_eq!(body["identity"]["baseline_mode"], "stub");
+        assert_eq!(
+            body["identity"]["required_host_modes"]["openclaw-http-host"],
+            "host-signed"
+        );
+        assert_eq!(
+            body["identity"]["effective_host_modes"]["openclaw-http-host"],
+            "host-signed"
+        );
+        assert_eq!(
+            body["identity"]["host_signed_hosts"][0],
+            "openclaw-http-host"
+        );
+        Ok(())
+    }
+
     #[test]
     fn config_from_env_rejects_invalid_identity_mode() {
         let result = with_env_vars(
@@ -2833,6 +2894,30 @@ mod tests {
                 Some("openclaw-http-host=typo-mode"),
             )],
             config_from_env,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_config_rejects_global_host_signed_without_host_config() {
+        let result = with_env_vars(
+            &[(
+                "SECRET_BROKER_IDENTITY_VERIFICATION_MODE",
+                Some("host-signed"),
+            )],
+            || config_from_env().and_then(|cfg| validate_config(&cfg)),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_config_rejects_global_hardware_backed_mode() {
+        let result = with_env_vars(
+            &[(
+                "SECRET_BROKER_IDENTITY_VERIFICATION_MODE",
+                Some("hardware-backed"),
+            )],
+            || config_from_env().and_then(|cfg| validate_config(&cfg)),
         );
         assert!(result.is_err());
     }

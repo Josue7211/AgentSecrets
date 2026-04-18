@@ -40,5 +40,5 @@ Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the status source of t
 If this evidence goes red, keep OpenClaw at `preview` and remove any shipped claim until the lane is green again and the host path is re-reviewed.
 
 Identity note:
-- The documented OpenClaw path can now use `host-signed` runtime identity on top of a non-`off` broker baseline.
+- The documented OpenClaw path can now use `host-signed` runtime identity on top of a non-`off` broker baseline, but per-host override selection still follows the claimed host header.
 - Host-signed envelope replay rejection is currently process-local to the running broker instance.

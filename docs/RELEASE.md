@@ -165,7 +165,7 @@ V4 release authority is the combination of:
 | --- | --- | --- | --- |
 | Broker policy decisions now explain action, target, actor, environment, and risk | allowed | policy tests plus full suite | Broker-owned policy claim only |
 | Local helper paths can verify runtime, host, and adapter identity in stub mode | allowed | identity tests | Local stub-attestation path only |
-| OpenClaw preview paths can require host-specific signed identity with same-process replay and downgrade protection | allowed | host-signed identity tests | Keep OpenClaw preview until the host matrix promotes it; do not turn this into a blanket external-runtime trust claim |
+| OpenClaw preview paths can require host-specific signed identity with same-process replay and downgrade protection | allowed | host-signed identity tests | Keep OpenClaw preview until the host matrix promotes it; do not turn this into a blanket external-runtime trust claim or independent host discovery claim |
 | Operators can verify audit-chain integrity and export redact-safe forensic bundles | allowed | forensic tests | Local SQLite evidence path only |
 | Rotation/recovery discipline and adversarial verification are part of release gating | allowed | drill script plus adversarial suite | Claim strength depends on current evidence |
 | External runtimes now have shipped V4 identity or platform trust | blocked | none in this repo | Keep external runtimes preview or unsupported |

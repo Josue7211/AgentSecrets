@@ -106,6 +106,8 @@ Treat any OpenClaw-like host app as an untrusted runtime unless it is the docume
 - If `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub`, hosts on the baseline path must attach signed identity headers for runtime, host, adapter, timestamp, and signature.
 - If `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=<host>=host-signed` applies to a host, that host must also send `x-secret-broker-attestation-id` and must be signed with the configured host-specific key.
 - The documented mixed deployment is: global `stub` baseline plus per-host `host-signed` overrides for the first external preview host.
+- The broker currently picks that per-host override from the claimed `x-secret-broker-host-id` header before host-specific verification runs.
+- Treat the override as fail-closed operator routing for a documented host contract, not as independent host discovery.
 - Host-signed envelope replay rejection is currently same-process only. Do not treat it as durable across broker restart.
 - Do not claim transcript safety beyond the tested path unless an end-to-end test proves it for that host.
 - Keep trusted-side provider placement and trusted execution adapter placement beside the broker, not inside the host runtime.

@@ -8,6 +8,33 @@ pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
     let provider = state.provider.health().await;
     let adapter = state.adapter.health().await;
     let identity = crate::identity::health(&state.cfg);
+    let required_host_modes = state
+        .cfg
+        .required_host_identity_modes
+        .iter()
+        .map(|(host_id, mode)| (host_id.clone(), json!(mode.as_str())))
+        .collect::<serde_json::Map<String, Value>>();
+    let effective_host_modes = state
+        .cfg
+        .required_host_identity_modes
+        .keys()
+        .map(|host_id| {
+            (
+                host_id.clone(),
+                json!(
+                    crate::identity::configured_mode_for_host(&state.cfg, Some(host_id)).as_str()
+                ),
+            )
+        })
+        .collect::<serde_json::Map<String, Value>>();
+    let host_signed_hosts = state
+        .cfg
+        .identity_host_signing_keys
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut host_signed_hosts = host_signed_hosts;
+    host_signed_hosts.sort();
 
     Json(json!({
         "ok": true,
@@ -21,11 +48,13 @@ pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
         "adapter": adapter,
         "identity": {
             "mode": identity.mode,
+            "baseline_mode": identity.mode,
             "configured": identity.configured,
             "ready": identity.ready,
             "max_age_seconds": identity.max_age_seconds,
-            "host_signed_hosts": state.cfg.identity_host_signing_keys.len(),
-            "required_host_modes": state.cfg.required_host_identity_modes.len(),
+            "host_signed_hosts": host_signed_hosts,
+            "required_host_modes": required_host_modes,
+            "effective_host_modes": effective_host_modes,
         },
     }))
 }
