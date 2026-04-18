@@ -36,7 +36,7 @@ require_grep 'It is the only external-host ship gate input.' docs/SUPPORTED_HOST
 require_grep '## Freshness policy' docs/SUPPORTED_HOSTS.md
 require_grep 'Local helper harness (`src/bin/e2e-node.rs`) | shipped' docs/SUPPORTED_HOSTS.md
 require_grep 'OpenClaw-style HTTP host | preview' docs/SUPPORTED_HOSTS.md
-require_grep 'no host-specific identity evidence yet; generic broker identity tests do not certify the OpenClaw runtime' docs/SUPPORTED_HOSTS.md
+require_grep 'Host-specific identity evidence now exists, but the documented host path remains preview' docs/SUPPORTED_HOSTS.md
 require_grep 'bash scripts/run-openclaw-e2e.sh' docs/SUPPORTED_HOSTS.md
 require_grep 'Claude / Codex / arbitrary external runtimes | unsupported' docs/SUPPORTED_HOSTS.md
 

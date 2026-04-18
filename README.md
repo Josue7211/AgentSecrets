@@ -29,7 +29,7 @@ Read [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) for the current V4 con
 - Broker-owned trusted input sessions that mint one-time opaque refs
 - Supported-host helper transcript and log redaction hooks for the local harness path
 - Explainable policy decisions over action, target, actor, environment, and risk
-- Stub attestation support for runtime, host, and adapter identity on supported local paths
+- Mixed runtime identity support: `stub` for local helper paths plus `host-signed` overrides for documented external preview hosts
 - Audit-chain verification and redact-safe forensic bundle export
 - Repeatable rotation/recovery drills and adversarial verification lanes
 
@@ -95,11 +95,23 @@ Optional:
 - `SECRET_BROKER_EXECUTION_ADAPTER_MODE=off|stub`
 - `SECRET_BROKER_REQUEST_TTL_SECONDS`
 - `SECRET_BROKER_RATE_LIMIT_PER_MINUTE`
-- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=off|stub`
+- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=off|stub|host-signed|hardware-backed`
 - `SECRET_BROKER_IDENTITY_ATTESTATION_KEY`
 - `SECRET_BROKER_IDENTITY_ATTESTATION_MAX_AGE_SECONDS`
 - `SECRET_BROKER_TRUSTED_RUNTIME_IDS`
 - `SECRET_BROKER_TRUSTED_HOST_IDS`
+- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=<host>=<key>,...`
+- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
+- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=<host>=host-signed,...`
+
+Recommended mixed-tier deployment:
+- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub`
+- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=openclaw-http-host=host-signed`
+- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=openclaw-http-host=<strong random key>`
+- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=openclaw-http-host=openclaw-runtime-v1`
+
+Replay note:
+- Host-signed envelope replay rejection is currently process-local to the running broker instance. It is not yet durable across broker restart or failover.
 
 `enforce` mode startup validations:
 - Refuses to run with default dev API keys

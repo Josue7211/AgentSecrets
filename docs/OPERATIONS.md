@@ -25,6 +25,15 @@ Recommended:
 - `SECRET_BROKER_IDENTITY_ATTESTATION_KEY=<strong random key>`
 - `SECRET_BROKER_TRUSTED_RUNTIME_IDS=<csv>`
 - `SECRET_BROKER_TRUSTED_HOST_IDS=<csv>`
+- `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=<host>=<strong random key>,...`
+- `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
+- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=<host>=host-signed,...`
+
+Mixed-tier operator guidance:
+- Keep a non-`off` global baseline when using `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES`.
+- Use `stub` as the normal baseline when local helper paths and OpenClaw preview paths share the same broker.
+- Use host-specific overrides only for hosts that have matching signing keys and trusted runtime pairs configured.
+- Host-signed replay rejection is process-local to the running broker instance today; it does not survive restart.
 
 ## Health checks
 - Liveness: `GET /healthz`

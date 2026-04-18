@@ -18,7 +18,7 @@ grep -Fq "No current guarantee of universal transcript-safe host behavior beyond
 grep -Fq "What this repo does not solve yet" docs/THREAT_MODEL.md || fail "THREAT_MODEL missing current gap section"
 grep -Fq "Run \`bash scripts/check-security-claims.sh\`" docs/RELEASE.md || fail "RELEASE missing claim audit step"
 grep -Fq "OpenClaw remains the preview host exception only for the documented broker HTTP path" docs/INTEGRATION.md || fail "INTEGRATION missing preview OpenClaw boundary"
-grep -Fq 'OpenClaw is a documented external host path in this repo, but it remains `preview` until Task 2 adds real OpenClaw-specific identity evidence.' docs/OPENCLAW.md || fail "OPENCLAW missing preview boundary"
+grep -Fq 'OpenClaw is a documented external host path in this repo, and host-specific identity evidence now exists for the documented broker HTTP path. It still remains `preview`.' docs/OPENCLAW.md || fail "OPENCLAW missing preview boundary"
 [[ -f docs/OPENCLAW_THREAT_NOTES.md ]] || fail "missing docs/OPENCLAW_THREAT_NOTES.md"
 grep -Fq "Do **not** type secrets into prompts, chat boxes, or task memory" docs/QUICKSTART.md || fail "QUICKSTART missing prompt-entry warning"
 

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 use subtle::ConstantTimeEq;
@@ -24,13 +25,24 @@ pub(crate) enum IdentityVerificationMode {
     HardwareBacked,
 }
 
-pub(crate) fn parse_identity_verification_mode(raw: &str) -> IdentityVerificationMode {
-    match raw.trim().to_lowercase().as_str() {
-        "stub" => IdentityVerificationMode::Stub,
-        "host-signed" => IdentityVerificationMode::HostSigned,
-        "hardware-backed" => IdentityVerificationMode::HardwareBacked,
-        _ => IdentityVerificationMode::Off,
+impl FromStr for IdentityVerificationMode {
+    type Err = &'static str;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw.trim().to_lowercase().as_str() {
+            "off" => Ok(IdentityVerificationMode::Off),
+            "stub" => Ok(IdentityVerificationMode::Stub),
+            "host-signed" => Ok(IdentityVerificationMode::HostSigned),
+            "hardware-backed" => Ok(IdentityVerificationMode::HardwareBacked),
+            _ => Err("Invalid identity verification mode"),
+        }
     }
+}
+
+pub(crate) fn parse_identity_verification_mode(
+    raw: &str,
+) -> Result<IdentityVerificationMode, &'static str> {
+    raw.parse()
 }
 
 impl IdentityVerificationMode {
@@ -128,6 +140,21 @@ pub(crate) fn health(cfg: &Config) -> IdentityHealth {
     }
 }
 
+pub(crate) fn configured_mode_for_host(
+    cfg: &Config,
+    host_id: Option<&str>,
+) -> IdentityVerificationMode {
+    let required_mode = host_id
+        .and_then(|host_id| cfg.required_host_identity_modes.get(host_id).copied())
+        .unwrap_or(IdentityVerificationMode::Off);
+
+    if cfg.identity_verification_mode.strength_rank() >= required_mode.strength_rank() {
+        cfg.identity_verification_mode
+    } else {
+        required_mode
+    }
+}
+
 pub(crate) fn adapter_id_for_action(action: &str) -> &'static str {
     match action {
         "password_fill" => "password_fill_stub",
@@ -205,10 +232,6 @@ fn read_claims(headers: &HeaderMap) -> Result<(IdentityClaims, String), Identity
         },
         signature,
     ))
-}
-
-fn read_attestation_id(headers: &HeaderMap) -> Result<String, IdentityError> {
-    read_header(headers, HDR_ATTESTATION_ID)
 }
 
 fn ensure_expected_adapter(
@@ -342,7 +365,12 @@ fn verify_host_signed_headers(
     ensure_expected_adapter(&claims, expected)?;
     ensure_fresh_timestamp(cfg, &claims, now_unix)?;
 
-    let attestation_id = read_attestation_id(headers)?;
+    let Some(attestation_id) = claims.attestation_id.clone() else {
+        return Err(IdentityError {
+            code: "invalid_identity",
+            message: "Missing identity attestation header",
+        });
+    };
     let Some(host_key) = cfg.identity_host_signing_keys.get(&claims.host_id) else {
         return Err(IdentityError {
             code: "identity_mismatch",
@@ -407,7 +435,13 @@ pub(crate) fn verify_headers(
     now_unix: i64,
     replay_cache: &IdentityReplayCache,
 ) -> Result<Option<IdentitySummary>, IdentityError> {
-    match cfg.identity_verification_mode {
+    let claimed_host = headers
+        .get(HDR_HOST_ID)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match configured_mode_for_host(cfg, claimed_host) {
         IdentityVerificationMode::Off => Ok(None),
         IdentityVerificationMode::Stub => verify_stub_headers(cfg, headers, expected, now_unix),
         IdentityVerificationMode::HostSigned => {
@@ -436,16 +470,15 @@ pub(crate) fn approval_identity_guard(
         return Ok(());
     };
 
-    let stored_mode = parse_identity_verification_mode(&identity.mode);
-    let required_mode = cfg
-        .required_host_identity_modes
-        .get(&identity.host_id)
-        .copied()
-        .unwrap_or(IdentityVerificationMode::Off);
+    let stored_mode =
+        parse_identity_verification_mode(&identity.mode).map_err(|_| IdentityError {
+            code: "invalid_identity",
+            message: "Stored request identity mode is invalid",
+        })?;
+    let required_mode = configured_mode_for_host(cfg, Some(&identity.host_id));
 
     if stored_mode.strength_rank() < required_mode.strength_rank()
-        || cfg.identity_verification_mode.strength_rank() < required_mode.strength_rank()
-        || cfg.identity_verification_mode.strength_rank() < stored_mode.strength_rank()
+        || required_mode.strength_rank() < stored_mode.strength_rank()
     {
         return Err(IdentityError {
             code: "identity_downgraded",
@@ -474,7 +507,11 @@ pub(crate) fn execute_identity_guard(
     };
 
     approval_identity_guard(cfg, Some(stored_identity))?;
-    let stored_mode = parse_identity_verification_mode(&stored_identity.mode);
+    let stored_mode =
+        parse_identity_verification_mode(&stored_identity.mode).map_err(|_| IdentityError {
+            code: "invalid_identity",
+            message: "Stored request identity mode is invalid",
+        })?;
 
     let Some(current_identity) = current_identity else {
         return Err(IdentityError {
@@ -483,7 +520,11 @@ pub(crate) fn execute_identity_guard(
         });
     };
 
-    let current_mode = parse_identity_verification_mode(&current_identity.mode);
+    let current_mode =
+        parse_identity_verification_mode(&current_identity.mode).map_err(|_| IdentityError {
+            code: "invalid_identity",
+            message: "Current request identity mode is invalid",
+        })?;
     if current_mode.strength_rank() < stored_mode.strength_rank() {
         return Err(IdentityError {
             code: "identity_downgraded",
@@ -514,21 +555,26 @@ mod tests {
     #[test]
     fn identity_mode_parser_handles_known_tiers() {
         assert_eq!(
-            parse_identity_verification_mode("off"),
+            parse_identity_verification_mode("off").expect("valid mode"),
             IdentityVerificationMode::Off
         );
         assert_eq!(
-            parse_identity_verification_mode("stub"),
+            parse_identity_verification_mode("stub").expect("valid mode"),
             IdentityVerificationMode::Stub
         );
         assert_eq!(
-            parse_identity_verification_mode("host-signed"),
+            parse_identity_verification_mode("host-signed").expect("valid mode"),
             IdentityVerificationMode::HostSigned
         );
         assert_eq!(
-            parse_identity_verification_mode("hardware-backed"),
+            parse_identity_verification_mode("hardware-backed").expect("valid mode"),
             IdentityVerificationMode::HardwareBacked
         );
+    }
+
+    #[test]
+    fn identity_mode_parser_rejects_unknown_values() {
+        assert!(parse_identity_verification_mode("typo-mode").is_err());
     }
 
     #[test]

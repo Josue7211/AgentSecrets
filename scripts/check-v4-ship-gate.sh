@@ -33,7 +33,8 @@ require_grep 'This document is the V4 platform-support source of truth.' docs/PL
 require_grep 'V3 host status still comes from [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) and `scripts/check-external-host-ship-gate.sh`.' docs/PLATFORM_SUPPORT.md
 require_grep 'If the external-host ship gate marks a host stale, keep that host at `preview` until fresh evidence returns.' docs/PLATFORM_SUPPORT.md
 require_grep 'Policy engine over action, target, actor, environment, and risk | shipped' docs/PLATFORM_SUPPORT.md
-require_grep 'Verified runtime, host, and adapter identity via stub attestation | preview' docs/PLATFORM_SUPPORT.md
+require_grep 'Verified runtime, host, and adapter identity via stub attestation | shipped' docs/PLATFORM_SUPPORT.md
+require_grep 'Host-specific runtime identity via host-signed attestation | preview' docs/PLATFORM_SUPPORT.md
 require_grep 'PR-safe adversarial regression lane | shipped' docs/PLATFORM_SUPPORT.md
 require_grep 'Extended adversarial verification lane | shipped' docs/PLATFORM_SUPPORT.md
 

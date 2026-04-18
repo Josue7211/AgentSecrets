@@ -302,49 +302,63 @@ fn sqlite_datetime_to_unix(s: &str) -> Option<i64> {
         .map(|d| d.and_utc().timestamp())
 }
 
-fn parse_kv_map(raw: &str) -> HashMap<String, String> {
-    raw.split(',')
-        .filter_map(|entry| {
-            let trimmed = entry.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            let (key, value) = trimmed.split_once('=')?;
-            let key = key.trim();
-            let value = value.trim();
-            if key.is_empty() || value.is_empty() {
-                return None;
-            }
-            Some((key.to_string(), value.to_string()))
-        })
-        .collect()
+fn parse_kv_map(raw: &str, env_name: &str) -> anyhow::Result<HashMap<String, String>> {
+    let mut parsed = HashMap::new();
+    for entry in raw.split(',') {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            anyhow::bail!("{env_name} contains an invalid entry: {trimmed}");
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            anyhow::bail!("{env_name} contains an invalid entry: {trimmed}");
+        }
+        parsed.insert(key.to_string(), value.to_string());
+    }
+    Ok(parsed)
 }
 
-fn parse_host_runtime_pairs(raw: &str) -> HashMap<String, Vec<String>> {
-    parse_kv_map(raw)
+fn parse_host_runtime_pairs(raw: &str) -> anyhow::Result<HashMap<String, Vec<String>>> {
+    parse_kv_map(raw, "SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS")?
         .into_iter()
-        .map(|(host_id, runtimes)| {
+        .map(|(host_id, runtimes)| -> anyhow::Result<(String, Vec<String>)> {
             let runtimes = runtimes
                 .split('|')
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string)
-                .collect();
-            (host_id, runtimes)
+                .collect::<Vec<_>>();
+            if runtimes.is_empty() {
+                anyhow::bail!(
+                    "SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS contains an empty runtime list for {host_id}"
+                );
+            }
+            Ok((host_id, runtimes))
         })
         .collect()
 }
 
 fn parse_required_host_identity_modes(
     raw: &str,
-) -> HashMap<String, identity::IdentityVerificationMode> {
-    parse_kv_map(raw)
+) -> anyhow::Result<HashMap<String, identity::IdentityVerificationMode>> {
+    parse_kv_map(raw, "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES")?
         .into_iter()
-        .map(|(host_id, mode)| (host_id, identity::parse_identity_verification_mode(&mode)))
+        .map(|(host_id, mode)| {
+            let mode = identity::parse_identity_verification_mode(&mode).map_err(|_| {
+                anyhow::anyhow!(
+                    "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES contains an invalid mode for {host_id}"
+                )
+            })?;
+            Ok((host_id, mode))
+        })
         .collect()
 }
 
-fn config_from_env() -> Config {
+fn config_from_env() -> anyhow::Result<Config> {
     let bind = std::env::var("SECRET_BROKER_BIND").unwrap_or_else(|_| "127.0.0.1:4815".to_string());
     let db_url = std::env::var("SECRET_BROKER_DB")
         .unwrap_or_else(|_| "sqlite://secret-broker.db?mode=rwc".to_string());
@@ -397,7 +411,8 @@ fn config_from_env() -> Config {
     let identity_verification_mode = identity::parse_identity_verification_mode(
         &std::env::var("SECRET_BROKER_IDENTITY_VERIFICATION_MODE")
             .unwrap_or_else(|_| "off".to_string()),
-    );
+    )
+    .map_err(|_| anyhow::anyhow!("SECRET_BROKER_IDENTITY_VERIFICATION_MODE is invalid"))?;
     let identity_attestation_key =
         std::env::var("SECRET_BROKER_IDENTITY_ATTESTATION_KEY").unwrap_or_default();
     let identity_attestation_max_age_seconds =
@@ -412,15 +427,16 @@ fn config_from_env() -> Config {
         policy::parse_list(&std::env::var("SECRET_BROKER_TRUSTED_HOST_IDS").unwrap_or_default());
     let identity_host_signing_keys = parse_kv_map(
         &std::env::var("SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS").unwrap_or_default(),
-    );
+        "SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS",
+    )?;
     let trusted_host_runtime_pairs = parse_host_runtime_pairs(
         &std::env::var("SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS").unwrap_or_default(),
-    );
+    )?;
     let required_host_identity_modes = parse_required_host_identity_modes(
         &std::env::var("SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES").unwrap_or_default(),
-    );
+    )?;
 
-    Config {
+    Ok(Config {
         bind,
         db_url,
         mode,
@@ -441,7 +457,7 @@ fn config_from_env() -> Config {
         identity_host_signing_keys,
         trusted_host_runtime_pairs,
         required_host_identity_modes,
-    }
+    })
 }
 
 async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
@@ -514,6 +530,36 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
         }
     }
 
+    if !cfg.required_host_identity_modes.is_empty()
+        && cfg.identity_verification_mode == identity::IdentityVerificationMode::Off
+    {
+        anyhow::bail!(
+            "required host identity modes need a non-off SECRET_BROKER_IDENTITY_VERIFICATION_MODE baseline"
+        );
+    }
+
+    for (host_id, required_mode) in &cfg.required_host_identity_modes {
+        match required_mode {
+            identity::IdentityVerificationMode::Off => {}
+            identity::IdentityVerificationMode::Stub => {}
+            identity::IdentityVerificationMode::HostSigned => {
+                if !cfg.identity_host_signing_keys.contains_key(host_id) {
+                    anyhow::bail!(
+                        "host-signed identity for {host_id} requires SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS"
+                    );
+                }
+                if !cfg.trusted_host_runtime_pairs.contains_key(host_id) {
+                    anyhow::bail!(
+                        "host-signed identity for {host_id} requires SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS"
+                    );
+                }
+            }
+            identity::IdentityVerificationMode::HardwareBacked => {
+                anyhow::bail!("hardware-backed identity is not implemented")
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -525,7 +571,7 @@ pub async fn run() -> anyhow::Result<()> {
         )
         .init();
 
-    let cfg = Arc::new(config_from_env());
+    let cfg = Arc::new(config_from_env()?);
     validate_config(&cfg)?;
 
     if cfg.client_api_key == "dev-client-key" || cfg.approver_api_key == "dev-approver-key" {
@@ -616,6 +662,41 @@ mod tests {
             trusted_host_runtime_pairs: HashMap::new(),
             required_host_identity_modes: HashMap::new(),
         })
+    }
+
+    fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        let _guard = ENV_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .expect("lock env");
+
+        let saved = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+
+        for (key, value) in vars {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+
+        let result = f();
+
+        for (key, value) in saved {
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(&key, value),
+                    None => std::env::remove_var(&key),
+                }
+            }
+        }
+
+        result
     }
 
     async fn setup_app_with_modes(
@@ -785,7 +866,7 @@ mod tests {
         envelope_id: &str,
     ) -> Vec<(&'static str, String)> {
         let adapter_id = crate::identity::adapter_id_for_action(action).to_string();
-        let signature = match cfg.identity_verification_mode {
+        let signature = match crate::identity::configured_mode_for_host(cfg, Some(host_id)) {
             crate::identity::IdentityVerificationMode::HostSigned => {
                 let host_key = cfg
                     .identity_host_signing_keys
@@ -2717,7 +2798,7 @@ mod tests {
         let (app, _cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("host-signed"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -2730,6 +2811,30 @@ mod tests {
         let body = json_response(resp).await;
         assert_eq!(body["identity"]["mode"], "host-signed");
         Ok(())
+    }
+
+    #[test]
+    fn config_from_env_rejects_invalid_identity_mode() {
+        let result = with_env_vars(
+            &[(
+                "SECRET_BROKER_IDENTITY_VERIFICATION_MODE",
+                Some("typo-mode"),
+            )],
+            config_from_env,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_from_env_rejects_invalid_required_host_identity_mode() {
+        let result = with_env_vars(
+            &[(
+                "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES",
+                Some("openclaw-http-host=typo-mode"),
+            )],
+            config_from_env,
+        );
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -2770,7 +2875,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("host-signed"),
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
         )
         .await?;
 
@@ -2837,7 +2942,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Stub,
             "stub",
-            crate::identity::parse_identity_verification_mode("host-signed"),
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
         )
         .await?;
 
@@ -2920,7 +3025,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("host-signed"),
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
         )
         .await?;
 
@@ -2971,7 +3076,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("host-signed"),
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
         )
         .await?;
 
@@ -3013,7 +3118,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("host-signed"),
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
         )
         .await?;
 
@@ -3056,7 +3161,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("host-signed"),
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
         )
         .await?;
 
@@ -3093,6 +3198,7 @@ mod tests {
         let downgraded_cfg = Arc::new(Config {
             db_url: cfg.db_url.clone(),
             identity_verification_mode: crate::identity::IdentityVerificationMode::Stub,
+            required_host_identity_modes: HashMap::new(),
             ..(*cfg).clone()
         });
         let pool = connect_sqlite(&downgraded_cfg.db_url).await?;
@@ -3127,6 +3233,134 @@ mod tests {
         assert_eq!(approve_resp.status(), StatusCode::FORBIDDEN);
         let body = json_response(approve_resp).await;
         assert_eq!(body["code"], "identity_downgraded");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_helper_identity_stays_stub_when_openclaw_requires_host_signed(
+    ) -> anyhow::Result<()> {
+        let (app, cfg) = setup_app_with_identity_mode(
+            crate::provider::ProviderBridgeMode::Off,
+            "off",
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+        )
+        .await?;
+
+        let mut create_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key);
+        for (key, value) in signed_identity_headers_with_timestamp_and_envelope(
+            &cfg,
+            "request_sign",
+            "local-helper-runtime",
+            "local-helper-host",
+            now_unix(),
+            "local-helper-stub-1",
+        ) {
+            create_req = create_req.header(key, value);
+        }
+        let create_req = create_req.body(Body::from(
+            json!({
+                "request_type": "request_sign",
+                "secret_ref": "bw://vault/item/login",
+                "action": "request_sign",
+                "target": "https://example.com/sign",
+                "reason": "local helper stub mode"
+            })
+            .to_string(),
+        ))?;
+        let create_resp = app.clone().oneshot(create_req).await?;
+        assert_eq!(create_resp.status(), StatusCode::OK);
+        let create_json = json_response(create_resp).await;
+        let id = create_json["data"]["id"].as_str().expect("id").to_string();
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        assert_eq!(approve_resp.status(), StatusCode::OK);
+        let approve_json = json_response(approve_resp).await;
+        assert_eq!(
+            approve_json["data"]["approval_payload"]["identity"]["mode"],
+            "stub"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn host_signed_replay_rejection_is_process_local() -> anyhow::Result<()> {
+        let (app, cfg) = setup_app_with_identity_mode(
+            crate::provider::ProviderBridgeMode::Off,
+            "off",
+            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+        )
+        .await?;
+
+        let replay_headers = signed_identity_headers_with_timestamp_and_envelope(
+            &cfg,
+            "request_sign",
+            "openclaw-runtime-v1",
+            "openclaw-http-host",
+            now_unix(),
+            "openclaw-process-local-1",
+        );
+
+        let mut first_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key);
+        for (key, value) in &replay_headers {
+            first_req = first_req.header(*key, value);
+        }
+        let first_req = first_req.body(Body::from(
+            json!({
+                "request_type": "request_sign",
+                "secret_ref": "bw://vault/item/login",
+                "action": "request_sign",
+                "target": "https://example.com/sign/one",
+                "reason": "first process-local replay check"
+            })
+            .to_string(),
+        ))?;
+        let first_resp = app.clone().oneshot(first_req).await?;
+        assert_eq!(first_resp.status(), StatusCode::OK);
+
+        let pool = connect_sqlite(&cfg.db_url).await?;
+        let restarted_state = AppState {
+            db: Arc::new(pool),
+            cfg: Arc::clone(&cfg),
+            provider: Arc::new(crate::provider::ProviderRuntime::off()),
+            adapter: Arc::new(crate::adapter::ExecutionAdapterRuntime::off()),
+            rate_state: Arc::new(Mutex::new(HashMap::new())),
+            identity_replay_cache: identity::new_replay_cache(),
+        };
+        let restarted_app = build_router(restarted_state);
+
+        let mut second_req = Request::builder()
+            .method("POST")
+            .uri("/v1/requests")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key);
+        for (key, value) in &replay_headers {
+            second_req = second_req.header(*key, value);
+        }
+        let second_req = second_req.body(Body::from(
+            json!({
+                "request_type": "request_sign",
+                "secret_ref": "bw://vault/item/login",
+                "action": "request_sign",
+                "target": "https://example.com/sign/two",
+                "reason": "second process-local replay check"
+            })
+            .to_string(),
+        ))?;
+        let second_resp = restarted_app.clone().oneshot(second_req).await?;
+        assert_eq!(second_resp.status(), StatusCode::OK);
         Ok(())
     }
 

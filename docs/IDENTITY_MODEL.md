@@ -8,7 +8,7 @@ This document defines the runtime identity tiers used by the broker. It exists t
 | --- | --- | --- | --- |
 | `off` | No runtime identity verification | Nothing about runtime, host, or adapter identity | Supported only as an explicit downgrade |
 | `stub` | Shared repo-local signed headers | A local helper knew the shared attestation key and signed runtime, host, adapter, and timestamp claims | Shipped for the local helper harness only |
-| `host-signed` | Host-specific signed identity envelope | A specific trusted host key signed runtime, host, adapter, timestamp, and a one-time attestation envelope id; the broker also enforces host/runtime pairing and replay rejection | Implemented for the documented OpenClaw host path, still preview until host-certification docs promote it |
+| `host-signed` | Host-specific signed identity envelope | A specific trusted host key signed runtime, host, adapter, timestamp, and a one-time attestation envelope id; the broker also enforces host/runtime pairing and same-process replay rejection | Implemented for the documented OpenClaw host path, still preview until host-certification docs promote it |
 | `hardware-backed` | Host identity rooted in hardware or equivalent remote attestation | Stronger proof that the host and runtime are the expected platform instance | Not implemented in this repo |
 
 ## Tier semantics
@@ -31,13 +31,14 @@ This document defines the runtime identity tiers used by the broker. It exists t
 - Uses a host-specific signing key from `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS`.
 - Requires a host/runtime binding from `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS`.
 - Requires a one-time `x-secret-broker-attestation-id` envelope id.
-- Rejects stale timestamps, replayed envelopes, mismatched host/runtime pairs, and adapter/action drift.
+- Rejects stale timestamps, same-process replayed envelopes, mismatched host/runtime pairs, and adapter/action drift.
 - Approval and execute-time checks fail closed if a request that was approved at `host-signed` is later evaluated under a weaker configured mode.
+- Current replay scope is process-local to the running broker instance. Restarting the broker clears that cache.
 
 ## Current host mapping
 
 - Local helper harness: `stub`
-- OpenClaw-style HTTP host: `host-signed` verification path exists in repo, but platform and host claims stay preview until the host-certification documents are promoted
+- OpenClaw-style HTTP host: `host-signed` verification path exists in repo as a per-host override on top of a non-`off` baseline, but platform and host claims stay preview until the host-certification documents are promoted
 
 ## Header contract
 
