@@ -37,7 +37,7 @@ The repo works, but the docs system does not scale cleanly into `V5` through `V1
 
 ## Current State
 
-Current root docs are flat:
+Current canonical docs are grouped by ownership:
 
 - `docs/product/ADAPTERS.md`
 - `docs/architecture/ARCHITECTURE.md`

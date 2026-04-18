@@ -39,7 +39,7 @@ Ship in this order:
 
 Treat the broader vision as complete only when all of these are true:
 
-- At least one real external host is `shipped` in [docs/product/SUPPORTED_HOSTS.md](../product/SUPPORTED_HOSTS.md).
+- At least one real external host is `shipped` in [docs/product/SUPPORTED_HOSTS.md](../../product/SUPPORTED_HOSTS.md).
 - That host has host-specific trusted-input, transcript/log redaction, and adapter E2E evidence.
 - At least one non-stub production adapter exists and is release-gated.
 - Provider mediation exists for a real secret source without exposing plaintext to the untrusted host path.
