@@ -6,7 +6,7 @@ fail() {
   exit 1
 }
 
-doc="docs/SUPPORTED_HOSTS.md"
+doc="docs/product/SUPPORTED_HOSTS.md"
 [[ -f "$doc" ]] || fail "missing $doc"
 
 python - "$doc" <<'PY'

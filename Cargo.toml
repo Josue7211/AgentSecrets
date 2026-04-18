@@ -20,7 +20,7 @@ sha2 = "0.10"
 rand = "0.8"
 hex = "0.4"
 subtle = "2.6"
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "chrono"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "macros", "migrate"] }
 time = "0.3"
 
 [dev-dependencies]
