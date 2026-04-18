@@ -77,11 +77,11 @@ No umbrella fake badge.
 
 ## Process
 
-- Release and claim authority: [[docs/RELEASE.md]]
-- Current host matrix: [[docs/SUPPORTED_HOSTS.md]]
-- Current platform support matrix: [[docs/PLATFORM_SUPPORT.md]]
-- Current post-V4 expansion plan: [[docs/superpowers/plans/2026-04-17-post-v4-vision-completion.md]]
-- Prior roadmap design reference: [[docs/superpowers/specs/2026-04-16-zero-trust-v2-v4-hardening-roadmap-design.md]]
+- Release and claim authority: [[docs/product/RELEASE.md]]
+- Current host matrix: [[docs/product/SUPPORTED_HOSTS.md]]
+- Current platform support matrix: [[docs/product/PLATFORM_SUPPORT.md]]
+- Current post-V4 expansion plan: [[docs/plans/v5/2026-04-17-post-v4-vision-completion.md]]
+- Prior roadmap design reference: [[docs/specs/2026-04-16-zero-trust-v2-v4-hardening-roadmap-design.md]]
 
 ## Completed Foundation
 
