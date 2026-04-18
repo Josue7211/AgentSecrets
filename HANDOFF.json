@@ -1,9 +1,9 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-17T18:14:07-04:00",
+  "timestamp": "2026-04-18T08:15:00-04:00",
   "branch": "roadmap/zero-trust-v2-v4-hardening",
-  "status": "roadmap_complete_v4",
-  "workstream": "zero-trust roadmap execution handoff",
+  "status": "v5_planning_ready",
+  "workstream": "post-v4 roadmap and docs IA handoff",
   "current_position": {
     "completed_upstream_commit": "543ed8b",
     "completed_upstream_scope": [
@@ -11,15 +11,16 @@
       "V2 Loop 2 provider isolation contract"
     ],
     "current_session_scope": [
-      "implemented V4 Loop 0 explainable policy engine over action, target, actor, environment, and risk",
-      "implemented V4 Loop 1 stub identity verification for runtime, host, and adapter claims",
-      "implemented V4 Loop 2 audit-chain verification and forensic bundle export",
-      "implemented V4 Loop 3 rotation and recovery drill automation",
-      "implemented V4 Loop 4 PR-safe and extended adversarial verification lanes",
-      "implemented V4 Loop 5 platform support matrix, V4 ship gate, CI wiring, and roadmap-complete handoff"
+      "completed V2 Loop 3 through V2 Loop 6",
+      "completed V3 Loop 0 through V3 Loop 4",
+      "completed V4 Loop 0 through V4 Loop 5",
+      "seeded the canonical V5 through V10 roadmap in ROADMAP.md",
+      "designed and implemented the docs information architecture cleanup",
+      "migrated canonical docs into product, architecture, operations, plans, specs, and backlog ownership folders",
+      "repaired migrated doc links and verified the docs tree is clean"
     ],
-    "next_loop": null,
-    "next_entrypoint": null
+    "next_loop": "V5 Loop 0",
+    "next_entrypoint": "ROADMAP.md"
   },
   "completed_work": [
     {
@@ -29,163 +30,104 @@
     },
     {
       "id": 2,
-      "name": "Confirmed Loop 1 and Loop 2 were already implemented and green at commit 543ed8b",
+      "name": "Confirmed V2 Loop 1 and V2 Loop 2 were already implemented and green at commit 543ed8b",
       "status": "done"
     },
     {
       "id": 3,
-      "name": "Added remaining per-loop plan docs for V2 Loop 3-6, V3 Loop 0-4, and V4 Loop 0-5",
+      "name": "Implemented V2 Loop 3 through V2 Loop 6",
       "status": "done"
     },
     {
       "id": 4,
-      "name": "Added detailed remaining-loop spec pack",
+      "name": "Implemented V3 Loop 0 through V3 Loop 4",
       "status": "done"
     },
     {
       "id": 5,
-      "name": "Implemented V2 Loop 3 trusted execution adapter containment with masked stub password_fill path",
+      "name": "Implemented V4 Loop 0 through V4 Loop 5",
       "status": "done"
     },
     {
       "id": 6,
-      "name": "Implemented V2 Loop 4 capability binding, approval payload hardening, and denial invalidation",
+      "name": "Completed post-V4 production bridge work",
       "status": "done"
     },
     {
       "id": 7,
-      "name": "Implemented V2 Loop 5 node-to-node E2E harness with helper-node binary and redacted artifact capture",
+      "name": "Authored the canonical V5 through V10 roadmap",
       "status": "done"
     },
     {
       "id": 8,
-      "name": "Implemented V2 Loop 6 ship gate docs, support matrix, release-note claims table, topology guidance, and CI summary check",
+      "name": "Authored the docs information architecture design and execution plan",
       "status": "done"
     },
     {
       "id": 9,
-      "name": "Implemented V3 Loop 0 trusted input sessions, broker opaque refs, and one-time request consumption",
-      "status": "done"
-    },
-    {
-      "id": 10,
-      "name": "Implemented V3 Loop 1 helper-side transcript/log redaction hooks, seeded canary coverage, and fail-closed behavior",
-      "status": "done"
-    },
-    {
-      "id": 11,
-      "name": "Implemented V3 Loop 2 sanctioned trusted execution adapter registry and local-helper adapter E2E coverage",
-      "status": "done"
-    },
-    {
-      "id": 12,
-      "name": "Implemented V3 Loop 3 supported-host matrix, threat notes, and regression policy",
-      "status": "done"
-    },
-    {
-      "id": 13,
-      "name": "Implemented V3 Loop 4 release gate, claims table, signoff rules, V3 gate script, and CI summary step",
-      "status": "done"
-    },
-    {
-      "id": 14,
-      "name": "Implemented V4 Loop 0 policy engine maturity",
-      "status": "done"
-    },
-    {
-      "id": 15,
-      "name": "Implemented V4 Loop 1 runtime, host, and adapter identity verification",
-      "status": "done"
-    },
-    {
-      "id": 16,
-      "name": "Implemented V4 Loop 2 audit integrity verification and forensic export tooling",
-      "status": "done"
-    },
-    {
-      "id": 17,
-      "name": "Implemented V4 Loop 3 rotation and recovery drill automation",
-      "status": "done"
-    },
-    {
-      "id": 18,
-      "name": "Implemented V4 Loop 4 adversarial continuous verification lanes",
-      "status": "done"
-    },
-    {
-      "id": 19,
-      "name": "Implemented V4 Loop 5 platform ship gate, support matrix, and CI summary checks",
+      "name": "Completed the docs information architecture cleanup and verification",
       "status": "done"
     }
   ],
-  "remaining_work": [],
+  "remaining_work": [
+    {
+      "id": 1,
+      "name": "Start V5 Loop 0 Host Contract Canon",
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "Author the V5L0 spec and implementation plan before code changes",
+      "status": "pending"
+    }
+  ],
   "repo_gap_notes": [
-    "The current roadmap defined in this repo ends at V4 Loop 5 and is now complete in the local tree.",
+    "The old V2 through V4 roadmap is complete and verified, but the product roadmap continues in this repo through V10.",
+    "V5 through V10 are planned, not implemented.",
     "External host claims remain matrix-bound: OpenClaw is preview and Claude/Codex/arbitrary external runtimes are unsupported for shipped trust claims.",
     "Identity verification remains a local stub-attestation contract, not hardware-backed or vendor-specific attestation.",
-    "Trusted execution adapters remain sanctioned stub helper-path contracts, not production browser automation or production provider mediation."
+    "Trusted execution is not yet universal external-host trusted execution; future claims must stay evidence-bound."
   ],
   "likely_touch_points": [
-    "Future work would be post-roadmap scope, not another defined V4 loop.",
-    "Any future version should start from docs/PLATFORM_SUPPORT.md, docs/RELEASE.md, and the current CI gates."
+    "ROADMAP.md",
+    "docs/INDEX.md",
+    "docs/product/RELEASE.md",
+    "docs/product/SUPPORTED_HOSTS.md",
+    "docs/product/PLATFORM_SUPPORT.md",
+    "docs/plans/v5/2026-04-17-post-v4-vision-completion.md",
+    "docs/specs/2026-04-18-docs-information-architecture-design.md"
   ],
   "resume_guardrails": [
-    "Do not expand host or runtime support claims beyond docs/SUPPORTED_HOSTS.md and docs/PLATFORM_SUPPORT.md without new evidence.",
-    "Keep docs/RELEASE.md, docs/PLATFORM_SUPPORT.md, scripts/check-v2-ship-gate.sh, scripts/check-v3-ship-gate.sh, and scripts/check-v4-ship-gate.sh aligned.",
-    "Keep PR-safe and extended adversarial lanes green before strengthening claims.",
-    "Preserve the broker-owned trusted-input, redaction, policy, identity, forensics, and drill contracts together."
+    "Do not expand host or runtime support claims beyond docs/product/SUPPORTED_HOSTS.md and docs/product/PLATFORM_SUPPORT.md without new evidence.",
+    "Treat ROADMAP.md as the single roadmap source of truth.",
+    "Keep docs/INDEX.md as navigation only, not a second roadmap.",
+    "Preserve version-owned plans under docs/plans/ and version-owned backlog under docs/backlog/.",
+    "For V5 work, write the host contract canon spec and plan before implementation."
   ],
   "decisions": [
     {
-      "decision": "Treat V4 completion as repo-owned completion with matrix-bound external claims",
-      "rationale": "The repo can complete its own policy, identity, forensics, drills, and ship gates without inventing unsupported external-host evidence."
+      "decision": "Treat V2 through V4 as shipped foundation and V5 through V10 as the next product ladder",
+      "rationale": "The repo now has a broader canonical roadmap, so future work should advance that ladder instead of pretending the roadmap ends at V4."
     },
     {
-      "decision": "Treat docs/RELEASE.md and docs/PLATFORM_SUPPORT.md as the V4 ship authority",
-      "rationale": "V4 claims now depend on continuous evidence, support statements, and downgrade policy living in one place."
+      "decision": "Treat ROADMAP.md as the single roadmap truth and docs/INDEX.md as the human docs entrypoint",
+      "rationale": "The docs IA cleanup established one roadmap source of truth and one navigation entrypoint."
+    },
+    {
+      "decision": "Keep external host support matrix-bound until each host earns shipped evidence",
+      "rationale": "V5 is explicitly built around first-class host certification, not umbrella support badges."
     }
   ],
-  "blockers": [],
+  "blockers": [
+    "No canonical V5 host contract exists yet.",
+    "Hermes, Claude, and Codex do not yet have host-specific certification lanes."
+  ],
   "human_actions_pending": [],
   "background_processes": [],
-  "uncommitted_files": [
-    ".continue-here.md",
-    ".github/workflows/ci.yml",
-    "HANDOFF.json",
-    "README.md",
-    "docs/ARCHITECTURE.md",
-    "docs/INTEGRATION.md",
-    "docs/OPENCLAW.md",
-    "docs/OPERATIONS.md",
-    "docs/PLATFORM_SUPPORT.md",
-    "docs/REDACTION_POLICY.md",
-    "docs/RELEASE.md",
-    "docs/SECURITY_GUARANTEES.md",
-    "docs/SUPPORTED_HOSTS.md",
-    "migrations/0003_trusted_input_sessions.sql",
-    "migrations/0004_v4_policy_and_identity_context.sql",
-    "scripts/check-v2-ship-gate.sh",
-    "scripts/check-v3-ship-gate.sh",
-    "scripts/check-v4-ship-gate.sh",
-    "scripts/run-adversarial-suite.sh",
-    "scripts/run-rotation-recovery-drills.sh",
-    "src/adapter.rs",
-    "src/audit.rs",
-    "src/bin/e2e-node.rs",
-    "src/bin/forensics.rs",
-    "src/handlers/execution.rs",
-    "src/handlers/mod.rs",
-    "src/handlers/requests.rs",
-    "src/handlers/trusted_input.rs",
-    "src/handlers/health.rs",
-    "src/identity.rs",
-    "src/lib.rs",
-    "src/policy.rs"
-  ],
-  "next_action": "No further loop is defined in the current roadmap. If new work starts, treat it as post-V4 scope and preserve the current V2/V3/V4 ship gates.",
-  "context_notes": "Repo truth after this session: V2 and V3 remain complete and green. This session completed V4 Loop 0 with a richer policy engine that explains decisions across action, target, actor, environment, and risk. It completed V4 Loop 1 with stub identity verification based on signed runtime, host, adapter, timestamp, and signature headers, with fail-closed request and execute behavior. It completed V4 Loop 2 with audit-chain verification plus redact-safe forensic export tooling exposed through a new forensics binary. It completed V4 Loop 3 with repeatable rotation and recovery drill automation that writes artifacts under target/drill-artifacts/. It completed V4 Loop 4 with PR-safe and extended adversarial suites that write artifacts under target/adversarial-artifacts/. It completed V4 Loop 5 with docs/PLATFORM_SUPPORT.md, a V4 ship gate in docs/RELEASE.md, scripts/check-v4-ship-gate.sh, and matching CI workflow lanes including a scheduled extended adversarial job.",
+  "uncommitted_files": [],
+  "next_action": "Start V5 Loop 0 from ROADMAP.md. Define the canonical first-class host contract, then write the V5L0 spec and execution plan before touching product code.",
+  "context_notes": "Repo truth now: V2, V3, and V4 are shipped and verified. Post-V4 bridge work is complete. The repo now carries a canonical V5 through V10 roadmap in ROADMAP.md, and the docs tree has been reorganized so product truth lives under docs/product, architecture truth under docs/architecture, operations under docs/operations, plans under docs/plans, specs under docs/specs, and version-owned backlog under docs/backlog. The current product roadmap state is V5 planned, V5 Loop 0 not started.",
   "verification_ran": [
-    "cargo fmt --all",
     "cargo fmt --all -- --check",
     "cargo check --all-targets --all-features",
     "cargo test --all-targets --all-features -- --nocapture",
@@ -196,14 +138,16 @@
     "bash scripts/check-v4-ship-gate.sh",
     "bash scripts/run-rotation-recovery-drills.sh",
     "bash scripts/run-adversarial-suite.sh pr",
-    "bash scripts/run-adversarial-suite.sh extended"
+    "bash scripts/run-adversarial-suite.sh extended",
+    "find docs -maxdepth 3 -type f | sort",
+    "find docs/superpowers -maxdepth 3 -type f 2>/dev/null || true",
+    "git status --short --branch"
   ],
   "resume_commands": [
     "git status --short --branch",
-    "bash scripts/check-v2-ship-gate.sh",
-    "bash scripts/check-v3-ship-gate.sh",
-    "bash scripts/check-v4-ship-gate.sh",
-    "bash scripts/run-rotation-recovery-drills.sh",
-    "bash scripts/run-adversarial-suite.sh pr"
+    "sed -n '1,120p' ROADMAP.md",
+    "sed -n '1,200p' docs/INDEX.md",
+    "sed -n '1,200p' docs/product/RELEASE.md",
+    "sed -n '1,200p' docs/product/SUPPORTED_HOSTS.md"
   ]
 }
