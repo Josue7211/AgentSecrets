@@ -52,8 +52,8 @@ AgentSecrets currently provides broker-level no-plaintext-response guarantees. I
 For supported hosts that use the trusted-input session flow, the repo now also provides a narrow ingress contract where the agent-visible path only handles broker-issued opaque refs.
 For the local supported-host helper path exercised by the harness, the repo also provides a narrow redaction contract for untrusted transcript and log sinks plus sanctioned adapter-path coverage.
 For the preview OpenClaw host path, the repo now also provides host-specific evidence for trusted-input ingress, transcript/log redaction, approval masking, and adapter execution without plaintext leakage.
-For that same preview OpenClaw path, the broker can now require `host-signed` runtime identity with host-specific keys, one-time attestation envelopes, host/runtime pair checks, and same-process replay rejection for the claimed host id.
-That per-host requirement still starts from the request's claimed host header, so it is a fail-closed routing control for the documented path, not independent host discovery.
+For that same preview OpenClaw path, the broker can now require a deployment-wide `host-signed` runtime identity baseline with host-specific keys, one-time attestation envelopes, host/runtime pair checks, and same-process replay rejection for the claimed host id.
+Stronger per-host tiers above a weaker deployment baseline are not a supported secure shape in this repo. Startup rejects that configuration.
 Those claims do not automatically extend to external host apps.
 Use [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) as the only host-certification authority for V3 claims.
 Use [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) as the only V4 control and claim authority.

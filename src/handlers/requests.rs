@@ -13,7 +13,9 @@ use crate::{
     audit::append_audit,
     auth::{enforce_rate_limit, require_approver, require_client_or_approver},
     capability_token, err,
-    identity::{approval_identity_guard, verify_headers, IdentityExpectations, IdentitySummary},
+    identity::{
+        approval_identity_tier_lock, verify_headers, IdentityExpectations, IdentitySummary,
+    },
     mask_secret_ref, now_unix, ok, request_id, token_hash, unix_to_sqlite_datetime, ApiError,
     ApiResponse, AppState, ApproveLookupRow, AuditQuery, AuditRow, CreateRequestBody, DecisionBody,
     ListQuery, RequestRow, RequestView,
@@ -622,7 +624,7 @@ pub(crate) async fn approve_request(
         identity_adapter_id,
         identity_verified_at,
     );
-    if let Err(identity_err) = approval_identity_guard(&state.cfg, identity.as_ref()) {
+    if let Err(identity_err) = approval_identity_tier_lock(&state.cfg, identity.as_ref()) {
         let _ = append_audit(
             &state.db,
             &auth_ctx.key_fingerprint,

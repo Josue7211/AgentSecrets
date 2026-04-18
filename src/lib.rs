@@ -540,25 +540,22 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
 
     match cfg.identity_verification_mode {
         identity::IdentityVerificationMode::Off => {}
-        identity::IdentityVerificationMode::Stub => {}
+        identity::IdentityVerificationMode::Stub => {
+            if cfg.identity_attestation_key.is_empty() {
+                anyhow::bail!(
+                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub requires SECRET_BROKER_IDENTITY_ATTESTATION_KEY"
+                );
+            }
+        }
         identity::IdentityVerificationMode::HostSigned => {
-            if cfg.identity_host_signing_keys.is_empty() {
-                anyhow::bail!(
-                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS"
-                );
-            }
-            if cfg.trusted_host_runtime_pairs.is_empty() {
-                anyhow::bail!(
-                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS"
-                );
-            }
-            if !cfg
-                .identity_host_signing_keys
-                .keys()
-                .any(|host_id| cfg.trusted_host_runtime_pairs.contains_key(host_id))
-            {
+            if identity::usable_host_signed_hosts(cfg).is_empty() {
                 anyhow::bail!(
                     "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires at least one host present in both SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS and SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS"
+                );
+            }
+            if cfg.identity_attestation_key.is_empty() {
+                anyhow::bail!(
+                    "SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed requires SECRET_BROKER_IDENTITY_ATTESTATION_KEY"
                 );
             }
         }
@@ -568,6 +565,11 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
     }
 
     for (host_id, required_mode) in &cfg.required_host_identity_modes {
+        if required_mode.strength_rank() > cfg.identity_verification_mode.strength_rank() {
+            anyhow::bail!(
+                "required host identity mode for {host_id} cannot exceed SECRET_BROKER_IDENTITY_VERIFICATION_MODE"
+            );
+        }
         match required_mode {
             identity::IdentityVerificationMode::Off => {}
             identity::IdentityVerificationMode::Stub => {}
@@ -785,6 +787,30 @@ mod tests {
         identity_mode: crate::identity::IdentityVerificationMode,
     ) -> anyhow::Result<(Router, Arc<Config>)> {
         let (app, cfg) = setup_app_with_modes(provider_bridge_mode, adapter_mode).await?;
+        let (identity_host_signing_keys, trusted_host_runtime_pairs, required_host_identity_modes) =
+            match identity_mode {
+                crate::identity::IdentityVerificationMode::HostSigned => (
+                    HashMap::from([
+                        (
+                            "openclaw-http-host".to_string(),
+                            "openclaw-host-signing-key".to_string(),
+                        ),
+                        (
+                            "unused-key-only-host".to_string(),
+                            "unused-host-key".to_string(),
+                        ),
+                    ]),
+                    HashMap::from([(
+                        "openclaw-http-host".to_string(),
+                        vec!["openclaw-runtime-v1".to_string()],
+                    )]),
+                    HashMap::from([(
+                        "openclaw-http-host".to_string(),
+                        crate::identity::IdentityVerificationMode::HostSigned,
+                    )]),
+                ),
+                _ => (HashMap::new(), HashMap::new(), HashMap::new()),
+            };
         let cfg = Arc::new(Config {
             identity_verification_mode: identity_mode,
             identity_attestation_key: "loop4-attestation-key".to_string(),
@@ -798,20 +824,12 @@ mod tests {
                 "secondary-helper-host".to_string(),
                 "openclaw-http-host".to_string(),
             ],
-            identity_host_signing_keys: HashMap::from([(
-                "openclaw-http-host".to_string(),
-                "openclaw-host-signing-key".to_string(),
-            )]),
-            trusted_host_runtime_pairs: HashMap::from([(
-                "openclaw-http-host".to_string(),
-                vec!["openclaw-runtime-v1".to_string()],
-            )]),
-            required_host_identity_modes: HashMap::from([(
-                "openclaw-http-host".to_string(),
-                crate::identity::IdentityVerificationMode::HostSigned,
-            )]),
+            identity_host_signing_keys,
+            trusted_host_runtime_pairs,
+            required_host_identity_modes,
             ..(*cfg).clone()
         });
+        validate_config(&cfg)?;
         let pool = connect_sqlite(&cfg.db_url).await?;
         let state = AppState {
             db: Arc::new(pool),
@@ -2843,11 +2861,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_reports_identity_override_picture() -> anyhow::Result<()> {
+    async fn health_reports_host_signed_health_uses_only_usable_hosts() -> anyhow::Result<()> {
         let (app, _cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -2858,7 +2876,7 @@ mod tests {
         let resp = app.clone().oneshot(req).await?;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = json_response(resp).await;
-        assert_eq!(body["identity"]["baseline_mode"], "stub");
+        assert_eq!(body["identity"]["baseline_mode"], "host-signed");
         assert_eq!(
             body["identity"]["required_host_modes"]["openclaw-http-host"],
             "host-signed"
@@ -2866,6 +2884,13 @@ mod tests {
         assert_eq!(
             body["identity"]["effective_host_modes"]["openclaw-http-host"],
             "host-signed"
+        );
+        assert_eq!(
+            body["identity"]["host_signed_hosts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
         assert_eq!(
             body["identity"]["host_signed_hosts"][0],
@@ -2922,6 +2947,45 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn validate_config_rejects_stub_without_attestation_key() {
+        let result = with_env_vars(
+            &[
+                ("SECRET_BROKER_IDENTITY_VERIFICATION_MODE", Some("stub")),
+                ("SECRET_BROKER_IDENTITY_ATTESTATION_KEY", None),
+            ],
+            || config_from_env().and_then(|cfg| validate_config(&cfg)),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_config_rejects_required_host_mode_stronger_than_baseline() {
+        let result = with_env_vars(
+            &[
+                ("SECRET_BROKER_IDENTITY_VERIFICATION_MODE", Some("stub")),
+                (
+                    "SECRET_BROKER_IDENTITY_ATTESTATION_KEY",
+                    Some("loop4-attestation-key"),
+                ),
+                (
+                    "SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS",
+                    Some("openclaw-http-host=openclaw-host-signing-key"),
+                ),
+                (
+                    "SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS",
+                    Some("openclaw-http-host=openclaw-runtime-v1"),
+                ),
+                (
+                    "SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES",
+                    Some("openclaw-http-host=host-signed"),
+                ),
+            ],
+            || config_from_env().and_then(|cfg| validate_config(&cfg)),
+        );
+        assert!(result.is_err());
+    }
+
     #[tokio::test]
     async fn create_request_rejects_missing_identity_headers_when_attestation_required(
     ) -> anyhow::Result<()> {
@@ -2960,7 +3024,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -3027,7 +3091,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Stub,
             "stub",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -3110,7 +3174,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -3161,7 +3225,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -3203,7 +3267,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -3246,7 +3310,7 @@ mod tests {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 
@@ -3322,66 +3386,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_helper_identity_stays_stub_when_openclaw_requires_host_signed(
-    ) -> anyhow::Result<()> {
-        let (app, cfg) = setup_app_with_identity_mode(
-            crate::provider::ProviderBridgeMode::Off,
-            "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
-        )
-        .await?;
-
-        let mut create_req = Request::builder()
-            .method("POST")
-            .uri("/v1/requests")
-            .header("content-type", "application/json")
-            .header("x-api-key", &cfg.client_api_key);
-        for (key, value) in signed_identity_headers_with_timestamp_and_envelope(
-            &cfg,
-            "request_sign",
-            "local-helper-runtime",
-            "local-helper-host",
-            now_unix(),
-            "local-helper-stub-1",
-        ) {
-            create_req = create_req.header(key, value);
-        }
-        let create_req = create_req.body(Body::from(
-            json!({
-                "request_type": "request_sign",
-                "secret_ref": "bw://vault/item/login",
-                "action": "request_sign",
-                "target": "https://example.com/sign",
-                "reason": "local helper stub mode"
-            })
-            .to_string(),
-        ))?;
-        let create_resp = app.clone().oneshot(create_req).await?;
-        assert_eq!(create_resp.status(), StatusCode::OK);
-        let create_json = json_response(create_resp).await;
-        let id = create_json["data"]["id"].as_str().expect("id").to_string();
-
-        let approve_req = Request::builder()
-            .method("POST")
-            .uri(format!("/v1/requests/{id}/approve"))
-            .header("x-api-key", &cfg.approver_api_key)
-            .body(Body::empty())?;
-        let approve_resp = app.clone().oneshot(approve_req).await?;
-        assert_eq!(approve_resp.status(), StatusCode::OK);
-        let approve_json = json_response(approve_resp).await;
-        assert_eq!(
-            approve_json["data"]["approval_payload"]["identity"]["mode"],
-            "stub"
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn host_signed_replay_rejection_is_process_local() -> anyhow::Result<()> {
         let (app, cfg) = setup_app_with_identity_mode(
             crate::provider::ProviderBridgeMode::Off,
             "off",
-            crate::identity::parse_identity_verification_mode("stub").expect("valid mode"),
+            crate::identity::parse_identity_verification_mode("host-signed").expect("valid mode"),
         )
         .await?;
 

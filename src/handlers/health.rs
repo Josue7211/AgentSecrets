@@ -27,14 +27,7 @@ pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
             )
         })
         .collect::<serde_json::Map<String, Value>>();
-    let host_signed_hosts = state
-        .cfg
-        .identity_host_signing_keys
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut host_signed_hosts = host_signed_hosts;
-    host_signed_hosts.sort();
+    let host_signed_hosts = crate::identity::usable_host_signed_hosts(&state.cfg);
 
     Json(json!({
         "ok": true,

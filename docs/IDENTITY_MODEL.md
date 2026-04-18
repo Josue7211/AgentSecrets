@@ -32,14 +32,15 @@ This document defines the runtime identity tiers used by the broker. It exists t
 - Requires a host/runtime binding from `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS`.
 - Requires a one-time `x-secret-broker-attestation-id` envelope id.
 - Rejects stale timestamps, same-process replayed envelopes, mismatched host/runtime pairs, and adapter/action drift.
-- Approval and execute-time checks use no-downgrade semantics: the stored verified tier and the current effective tier must not move below each other.
+- Approval checks tier-lock the stored verified identity tier to the current deployment baseline.
+- Execute checks require the current request identity to stay at least as strong as the stored approved tier and to match runtime, host, and adapter claims.
 - Current replay scope is process-local to the running broker instance. Restarting the broker clears that cache.
-- Per-host override selection still starts from the claimed `x-secret-broker-host-id` header. That means `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` is a fail-closed routing control, not independent proof that the broker discovered the correct host without caller input.
+- Stronger per-host tiers above the deployment baseline are not supported. Startup fails if `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` asks for a stronger tier than `SECRET_BROKER_IDENTITY_VERIFICATION_MODE`.
 
 ## Current host mapping
 
 - Local helper harness: `stub`
-- OpenClaw-style HTTP host: `host-signed` verification path exists in repo as a per-host override on top of a non-`off` baseline, but that override still keys off the claimed host header and platform plus host claims stay preview until the host-certification documents are promoted
+- OpenClaw-style HTTP host: `host-signed` verification path exists when the deployment baseline is `host-signed`, but platform plus host claims stay preview until the host-certification documents are promoted
 
 ## Header contract
 
@@ -59,5 +60,5 @@ All non-`off` tiers use:
 
 - Do not use `stub` evidence to certify an external host.
 - Do not use `host-signed` as a blanket claim for all external runtimes.
-- Do not describe per-host overrides as independent host identification; today they are stronger verification rules for a claimed host id.
+- Do not describe `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` as a way to escalate trust above the deployment baseline.
 - Do not claim `hardware-backed` until there is real attestation plumbing and verification evidence in this repo.

@@ -19,7 +19,7 @@ This document is the V4 platform-support source of truth. V3 host status still c
 | Runtime path | Status | Identity | Notes |
 | --- | --- | --- | --- |
 | Local helper runtime (`src/bin/e2e-node.rs`) | shipped | stub verified | Repo-owned path only |
-| OpenClaw-style HTTP runtime | preview | host-signed preview | Host-specific verification exists as an operator-configured per-host override above the stub baseline, but override selection still follows the claimed host header and broader V3/V4 claims stay preview until the host matrix says otherwise |
+| OpenClaw-style HTTP runtime | preview | host-signed preview | Host-specific verification exists when the deployment baseline is `host-signed`; broader V3/V4 claims stay preview until the host matrix says otherwise |
 | Claude / Codex / arbitrary external runtimes | unsupported | not certified | Do not claim V4 platform trust tier or imply host certification from this matrix |
 
 ## Adapter matrix

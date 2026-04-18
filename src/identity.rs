@@ -125,10 +125,8 @@ pub(crate) fn health(cfg: &Config) -> IdentityHealth {
         },
         IdentityVerificationMode::HostSigned => IdentityHealth {
             mode: "host-signed",
-            configured: !cfg.identity_host_signing_keys.is_empty()
-                && !cfg.trusted_host_runtime_pairs.is_empty(),
-            ready: !cfg.identity_host_signing_keys.is_empty()
-                && !cfg.trusted_host_runtime_pairs.is_empty(),
+            configured: !usable_host_signed_hosts(cfg).is_empty(),
+            ready: !usable_host_signed_hosts(cfg).is_empty(),
             max_age_seconds: cfg.identity_attestation_max_age_seconds,
         },
         IdentityVerificationMode::HardwareBacked => IdentityHealth {
@@ -140,19 +138,22 @@ pub(crate) fn health(cfg: &Config) -> IdentityHealth {
     }
 }
 
+pub(crate) fn usable_host_signed_hosts(cfg: &Config) -> Vec<String> {
+    let mut hosts = cfg
+        .identity_host_signing_keys
+        .keys()
+        .filter(|host_id| cfg.trusted_host_runtime_pairs.contains_key(*host_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    hosts.sort();
+    hosts
+}
+
 pub(crate) fn configured_mode_for_host(
     cfg: &Config,
-    host_id: Option<&str>,
+    _host_id: Option<&str>,
 ) -> IdentityVerificationMode {
-    let required_mode = host_id
-        .and_then(|host_id| cfg.required_host_identity_modes.get(host_id).copied())
-        .unwrap_or(IdentityVerificationMode::Off);
-
-    if cfg.identity_verification_mode.strength_rank() >= required_mode.strength_rank() {
-        cfg.identity_verification_mode
-    } else {
-        required_mode
-    }
+    cfg.identity_verification_mode
 }
 
 pub(crate) fn adapter_id_for_action(action: &str) -> &'static str {
@@ -454,7 +455,7 @@ pub(crate) fn verify_headers(
     }
 }
 
-pub(crate) fn approval_identity_guard(
+pub(crate) fn approval_identity_tier_lock(
     cfg: &Config,
     identity: Option<&IdentitySummary>,
 ) -> Result<(), IdentityError> {
@@ -477,12 +478,10 @@ pub(crate) fn approval_identity_guard(
         })?;
     let required_mode = configured_mode_for_host(cfg, Some(&identity.host_id));
 
-    if stored_mode.strength_rank() < required_mode.strength_rank()
-        || required_mode.strength_rank() < stored_mode.strength_rank()
-    {
+    if stored_mode.strength_rank() != required_mode.strength_rank() {
         return Err(IdentityError {
             code: "identity_downgraded",
-            message: "Stored request identity is below the required trust tier",
+            message: "Stored request identity tier no longer matches the required trust tier",
         });
     }
 
@@ -506,7 +505,7 @@ pub(crate) fn execute_identity_guard(
         return Ok(());
     };
 
-    approval_identity_guard(cfg, Some(stored_identity))?;
+    approval_identity_tier_lock(cfg, Some(stored_identity))?;
     let stored_mode =
         parse_identity_verification_mode(&stored_identity.mode).map_err(|_| IdentityError {
             code: "invalid_identity",

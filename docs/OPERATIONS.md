@@ -29,12 +29,14 @@ Recommended:
 - `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
 - `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=<host>=host-signed,...`
 
-Mixed-tier operator guidance:
-- Keep a non-`off` global baseline when using `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES`.
-- Use `stub` as the normal baseline when local helper paths and OpenClaw preview paths share the same broker.
-- Use host-specific overrides only for hosts that have matching signing keys and trusted runtime pairs configured.
-- Per-host override selection currently follows the claimed `x-secret-broker-host-id` header, so treat it as a fail-closed routing control for documented hosts, not as independent host discovery.
+Identity baseline guidance:
+- Choose one deployment-wide baseline per broker instance.
+- Use `stub` for the local helper harness path.
+- Use `host-signed` for the documented OpenClaw preview host path.
+- Do not try to escalate one host above a weaker broker-wide baseline. Startup now rejects that shape.
 - If the global baseline is `host-signed`, startup now fails unless at least one host is configured in both `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS` and `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS`.
+- If the global baseline is `stub`, startup now fails unless `SECRET_BROKER_IDENTITY_ATTESTATION_KEY` is set.
+- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` may not specify a stronger tier than the broker-wide baseline.
 - If the global baseline is `hardware-backed`, startup fails because that tier is not implemented.
 - Host-signed replay rejection is process-local to the running broker instance today; it does not survive restart.
 
@@ -42,7 +44,7 @@ Mixed-tier operator guidance:
 - Liveness: `GET /healthz`
 - Readiness: `GET /readyz`
 - Local script: `scripts/healthcheck.sh http://127.0.0.1:4815`
-- `GET /healthz` now reports the identity baseline plus `required_host_modes`, `effective_host_modes`, and configured host-signed host ids so operators can see the mixed-tier picture.
+- `GET /healthz` now reports the identity baseline plus `required_host_modes`, `effective_host_modes`, and usable host-signed host ids so operators can see the active deployment picture.
 
 ## One-box service
 - Install [systemd/secret-broker.service](../systemd/secret-broker.service)

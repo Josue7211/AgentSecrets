@@ -29,7 +29,7 @@ Read [docs/PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) for the current V4 con
 - Broker-owned trusted input sessions that mint one-time opaque refs
 - Supported-host helper transcript and log redaction hooks for the local harness path
 - Explainable policy decisions over action, target, actor, environment, and risk
-- Mixed runtime identity support: `stub` for local helper paths plus operator-configured `host-signed` overrides for documented external preview hosts
+- Deployment-wide runtime identity baselines: `stub` for local helper deployments or `host-signed` for the documented external preview host deployment
 - Audit-chain verification and redact-safe forensic bundle export
 - Repeatable rotation/recovery drills and adversarial verification lanes
 
@@ -102,23 +102,20 @@ Optional:
 - `SECRET_BROKER_TRUSTED_HOST_IDS`
 - `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=<host>=<key>,...`
 - `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=<host>=<runtime>|<runtime>,...`
-- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=<host>=host-signed,...`
+- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=<host>=<mode>,...`
 
-Recommended mixed-tier deployment:
-- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub`
-- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES=openclaw-http-host=host-signed`
+Recommended host-signed preview-host deployment:
+- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed`
 - `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS=openclaw-http-host=<strong random key>`
 - `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS=openclaw-http-host=openclaw-runtime-v1`
-
-Mixed-tier note:
-- Per-host override selection currently follows the claimed `x-secret-broker-host-id` header before host-specific signature verification runs.
-- Treat `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` as fail-closed operator routing policy for documented preview hosts, not as independent host discovery.
 
 Replay note:
 - Host-signed envelope replay rejection is currently process-local to the running broker instance. It is not yet durable across broker restart or failover.
 
 Identity startup note:
+- `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=stub` now fails startup unless `SECRET_BROKER_IDENTITY_ATTESTATION_KEY` is set.
 - `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=host-signed` now fails startup unless at least one host appears in both `SECRET_BROKER_IDENTITY_HOST_SIGNING_KEYS` and `SECRET_BROKER_TRUSTED_HOST_RUNTIME_PAIRS`.
+- `SECRET_BROKER_REQUIRED_HOST_IDENTITY_MODES` cannot request a stronger tier than the global baseline.
 - `SECRET_BROKER_IDENTITY_VERIFICATION_MODE=hardware-backed` currently fails startup because that tier is not implemented.
 
 `enforce` mode startup validations:
