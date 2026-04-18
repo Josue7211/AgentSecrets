@@ -1,6 +1,6 @@
 # Contributing
 
-This repository is open source under the Apache 2.0 license.
+This repository is open source under the AGPL-3.0-or-later license.
 
 ## Before you submit changes
 
