@@ -248,6 +248,7 @@ mod tests {
             mode: crate::BrokerMode::Enforce,
             provider_bridge_mode: crate::provider::ProviderBridgeMode::Off,
             execution_adapter_mode: crate::adapter::ExecutionAdapterMode::Off,
+            request_sign_adapter_url: String::new(),
             client_api_key: "test-client-key-123456".to_string(),
             approver_api_key: "test-approver-key-abcdef".to_string(),
             capability_ttl_seconds: 60,

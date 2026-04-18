@@ -48,6 +48,7 @@ struct Config {
     mode: BrokerMode,
     provider_bridge_mode: provider::ProviderBridgeMode,
     execution_adapter_mode: adapter::ExecutionAdapterMode,
+    request_sign_adapter_url: String,
     client_api_key: String,
     approver_api_key: String,
     capability_ttl_seconds: i64,
@@ -167,24 +168,29 @@ type RequestRow = (
     String,
 );
 
-type ExecuteLookupRow = (
-    String,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
+#[derive(sqlx::FromRow)]
+struct ExecuteLookupRow {
+    status: String,
+    action: String,
+    target: String,
+    secret_ref: String,
+    capability_hash: Option<String>,
+    capability_expires_at: Option<String>,
+    capability_request_id: Option<String>,
+    capability_action: Option<String>,
+    capability_target: Option<String>,
+    capability_issued_at: Option<String>,
+    policy_outcome: Option<String>,
+    policy_risk_score: Option<i64>,
+    policy_environment: Option<String>,
+    policy_reasons: Option<String>,
+    identity_status: String,
+    identity_mode: String,
+    identity_runtime_id: Option<String>,
+    identity_host_id: Option<String>,
+    identity_adapter_id: Option<String>,
+    identity_verified_at: Option<String>,
+}
 
 type ApproveLookupRow = (
     String,
@@ -256,6 +262,18 @@ fn capability_token() -> String {
 
 fn trusted_input_completion_token() -> String {
     format!("tit_{}", random_hex(24))
+}
+
+fn execution_adapter_runtime(cfg: &Config) -> Arc<adapter::ExecutionAdapterRuntime> {
+    Arc::new(match cfg.execution_adapter_mode {
+        adapter::ExecutionAdapterMode::Off => adapter::ExecutionAdapterRuntime::off(),
+        adapter::ExecutionAdapterMode::Stub => adapter::ExecutionAdapterRuntime::stub(),
+        adapter::ExecutionAdapterMode::RequestSignProduction => {
+            adapter::ExecutionAdapterRuntime::request_sign_production(
+                cfg.request_sign_adapter_url.clone(),
+            )
+        }
+    })
 }
 
 fn token_hash(token: &str) -> String {
@@ -355,6 +373,8 @@ fn config_from_env() -> anyhow::Result<Config> {
         &std::env::var("SECRET_BROKER_EXECUTION_ADAPTER_MODE")
             .unwrap_or_else(|_| "off".to_string()),
     );
+    let request_sign_adapter_url =
+        std::env::var("SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL").unwrap_or_default();
 
     let client_api_key = std::env::var("SECRET_BROKER_CLIENT_API_KEY")
         .or_else(|_| std::env::var("SECRET_BROKER_API_KEY"))
@@ -422,6 +442,7 @@ fn config_from_env() -> anyhow::Result<Config> {
         mode,
         provider_bridge_mode,
         execution_adapter_mode,
+        request_sign_adapter_url,
         client_api_key,
         approver_api_key,
         capability_ttl_seconds,
@@ -530,6 +551,17 @@ fn validate_config(cfg: &Config) -> anyhow::Result<()> {
         }
     }
 
+    if matches!(
+        cfg.execution_adapter_mode,
+        adapter::ExecutionAdapterMode::RequestSignProduction
+    ) && !(cfg.request_sign_adapter_url.starts_with("http://")
+        || cfg.request_sign_adapter_url.starts_with("https://"))
+    {
+        anyhow::bail!(
+            "SECRET_BROKER_EXECUTION_ADAPTER_MODE=request-sign-production requires SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL to be an http(s) URL"
+        );
+    }
+
     Ok(())
 }
 
@@ -561,10 +593,7 @@ pub async fn run() -> anyhow::Result<()> {
             provider::ProviderBridgeMode::Off => provider::ProviderRuntime::off(),
             provider::ProviderBridgeMode::Stub => provider::ProviderRuntime::stub(),
         }),
-        adapter: Arc::new(match cfg.execution_adapter_mode {
-            adapter::ExecutionAdapterMode::Off => adapter::ExecutionAdapterRuntime::off(),
-            adapter::ExecutionAdapterMode::Stub => adapter::ExecutionAdapterRuntime::stub(),
-        }),
+        adapter: execution_adapter_runtime(&cfg),
         rate_state: Arc::new(Mutex::new(HashMap::new())),
         identity_replay_cache: identity::new_replay_cache(),
     };
@@ -589,6 +618,7 @@ mod tests {
     use super::*;
     use anyhow::Context;
     use axum::{body::Body, http::Request};
+    use serde::Deserialize;
     use serde_json::{json, Value};
     use std::{
         fs,
@@ -606,6 +636,7 @@ mod tests {
         db_url: String,
         provider_bridge_mode: crate::provider::ProviderBridgeMode,
         execution_adapter_mode: crate::adapter::ExecutionAdapterMode,
+        request_sign_adapter_url: String,
     ) -> Arc<Config> {
         Arc::new(Config {
             bind: "127.0.0.1:0".to_string(),
@@ -613,6 +644,7 @@ mod tests {
             mode: BrokerMode::Enforce,
             provider_bridge_mode,
             execution_adapter_mode,
+            request_sign_adapter_url,
             client_api_key: "test-client-key-123456".to_string(),
             approver_api_key: "test-approver-key-abcdef".to_string(),
             capability_ttl_seconds: 60,
@@ -631,6 +663,41 @@ mod tests {
             identity_host_signing_keys: HashMap::new(),
             trusted_host_runtime_pairs: HashMap::new(),
         })
+    }
+
+    #[derive(Deserialize)]
+    struct MockRequestSignServicePayload {
+        target: String,
+        secret_hex: String,
+        secret_ref_masked: String,
+    }
+
+    async fn spawn_mock_request_sign_service() -> anyhow::Result<String> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let app = Router::new().route(
+            "/v1/request-sign",
+            post(
+                |Json(payload): Json<MockRequestSignServicePayload>| async move {
+                    let secret_bytes = hex::decode(&payload.secret_hex).unwrap_or_default();
+                    let mut hasher = Sha256::new();
+                    hasher.update(b"request-sign-service|");
+                    hasher.update(secret_bytes);
+                    hasher.update(b"|");
+                    hasher.update(payload.target.as_bytes());
+                    hasher.update(b"|");
+                    hasher.update(payload.secret_ref_masked.as_bytes());
+                    let digest = hex::encode(hasher.finalize());
+                    Json(json!({
+                        "signature_ref": format!("sig_service_{}", &digest[..12])
+                    }))
+                },
+            ),
+        );
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Ok(format!("http://{addr}/v1/request-sign"))
     }
 
     fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
@@ -676,11 +743,21 @@ mod tests {
         let db_path = db_file.path().to_string_lossy().to_string();
         let db_url = format!("sqlite://{}?mode=rwc", db_path);
         std::mem::forget(db_file);
+        let execution_adapter_mode = crate::adapter::parse_execution_adapter_mode(adapter_mode);
+        let request_sign_adapter_url = if matches!(
+            execution_adapter_mode,
+            crate::adapter::ExecutionAdapterMode::RequestSignProduction
+        ) {
+            spawn_mock_request_sign_service().await?
+        } else {
+            String::new()
+        };
 
         let cfg = test_config(
             db_url.clone(),
             provider_bridge_mode,
-            crate::adapter::parse_execution_adapter_mode(adapter_mode),
+            execution_adapter_mode,
+            request_sign_adapter_url,
         );
         let pool = connect_sqlite(&db_url).await?;
         init_db(&pool).await?;
@@ -695,14 +772,7 @@ mod tests {
                     crate::provider::ProviderRuntime::stub()
                 }
             }),
-            adapter: Arc::new(match cfg.execution_adapter_mode {
-                crate::adapter::ExecutionAdapterMode::Off => {
-                    crate::adapter::ExecutionAdapterRuntime::off()
-                }
-                crate::adapter::ExecutionAdapterMode::Stub => {
-                    crate::adapter::ExecutionAdapterRuntime::stub()
-                }
-            }),
+            adapter: execution_adapter_runtime(&cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
         };
@@ -772,14 +842,7 @@ mod tests {
                     crate::provider::ProviderRuntime::stub()
                 }
             }),
-            adapter: Arc::new(match cfg.execution_adapter_mode {
-                crate::adapter::ExecutionAdapterMode::Off => {
-                    crate::adapter::ExecutionAdapterRuntime::off()
-                }
-                crate::adapter::ExecutionAdapterMode::Stub => {
-                    crate::adapter::ExecutionAdapterRuntime::stub()
-                }
-            }),
+            adapter: execution_adapter_runtime(&cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
         };
@@ -844,7 +907,9 @@ mod tests {
         timestamp: i64,
         envelope_id: &str,
     ) -> Vec<(&'static str, String)> {
-        let adapter_id = crate::identity::adapter_id_for_action(action).to_string();
+        let adapter_id =
+            crate::identity::adapter_id_for_action_in_mode(action, cfg.execution_adapter_mode)
+                .to_string();
         let signature = match crate::identity::configured_mode(cfg) {
             crate::identity::IdentityVerificationMode::HostSigned => {
                 let host_key = cfg
@@ -1215,7 +1280,10 @@ mod tests {
         anyhow::bail!("broker did not become ready at {broker_url}");
     }
 
-    async fn spawn_broker(artifact_dir: &Path) -> anyhow::Result<(Child, String)> {
+    async fn spawn_broker_with_adapter_mode(
+        artifact_dir: &Path,
+        adapter_mode: &str,
+    ) -> anyhow::Result<(Child, String)> {
         ensure_e2e_binaries_built()?;
 
         let port = random_local_port()?;
@@ -1224,8 +1292,14 @@ mod tests {
         let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
         let stdout_log = fs::File::create(artifact_dir.join("broker.stdout.log"))?;
         let stderr_log = fs::File::create(artifact_dir.join("broker.stderr.log"))?;
+        let request_sign_adapter_url = if adapter_mode == "request-sign-production" {
+            Some(spawn_mock_request_sign_service().await?)
+        } else {
+            None
+        };
 
-        let child = Command::new(e2e_binary_path("secret-broker"))
+        let mut command = Command::new(e2e_binary_path("secret-broker"));
+        command
             .current_dir(repo_root())
             .env("SECRET_BROKER_BIND", format!("127.0.0.1:{port}"))
             .env("SECRET_BROKER_DB", db_url)
@@ -1243,14 +1317,20 @@ mod tests {
                 "https://example.com,handoff://local-helper/",
             )
             .env("SECRET_BROKER_PROVIDER_BRIDGE_MODE", "stub")
-            .env("SECRET_BROKER_EXECUTION_ADAPTER_MODE", "stub")
+            .env("SECRET_BROKER_EXECUTION_ADAPTER_MODE", adapter_mode)
             .stdout(Stdio::from(stdout_log))
-            .stderr(Stdio::from(stderr_log))
-            .spawn()
-            .context("failed to spawn broker process")?;
+            .stderr(Stdio::from(stderr_log));
+        if let Some(url) = &request_sign_adapter_url {
+            command.env("SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL", url);
+        }
+        let child = command.spawn().context("failed to spawn broker process")?;
 
         wait_for_broker_ready(&broker_url).await?;
         Ok((child, broker_url))
+    }
+
+    async fn spawn_broker(artifact_dir: &Path) -> anyhow::Result<(Child, String)> {
+        spawn_broker_with_adapter_mode(artifact_dir, "stub").await
     }
 
     async fn stop_broker(mut child: Child) -> anyhow::Result<()> {
@@ -1374,6 +1454,7 @@ mod tests {
         action: &'a str,
         target: &'a str,
         reason: &'a str,
+        adapter_mode: &'a str,
         lane: HarnessLane,
         envs: &'a [(&'a str, &'a str)],
     }
@@ -1392,7 +1473,8 @@ mod tests {
         let artifact_dir = new_artifact_dir(spec.label)?;
         let fixture_secret = "stub-secret-material".to_string();
 
-        let (broker_child, broker_url) = spawn_broker(&artifact_dir).await?;
+        let (broker_child, broker_url) =
+            spawn_broker_with_adapter_mode(&artifact_dir, spec.adapter_mode).await?;
 
         let create = spec
             .lane
@@ -1520,6 +1602,7 @@ mod tests {
             action: "password_fill",
             target: "https://example.com/login",
             reason: "loop 5 happy path",
+            adapter_mode: "stub",
             lane: HarnessLane::Standard,
             envs: &[],
         })
@@ -1533,6 +1616,7 @@ mod tests {
             action: "password_fill",
             target: "https://example.com/profile",
             reason: "loop 5 happy path",
+            adapter_mode: "stub",
             lane: HarnessLane::Standard,
             envs: &[],
         })
@@ -1760,6 +1844,7 @@ mod tests {
             action: "request_sign",
             target: "https://example.com/sign",
             reason: "node-to-node-request-sign happy path",
+            adapter_mode: "request-sign-production",
             lane: HarnessLane::Standard,
             envs: &[],
         })
@@ -1773,6 +1858,7 @@ mod tests {
             action: "credential_handoff",
             target: "handoff://local-helper/session",
             reason: "node-to-node-credential-handoff happy path",
+            adapter_mode: "stub",
             lane: HarnessLane::Standard,
             envs: &[],
         })
@@ -1865,6 +1951,32 @@ mod tests {
             body["adapter"]["supported_actions"][2]["action"],
             "credential_handoff"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn health_reports_request_sign_production_adapter_mode() -> anyhow::Result<()> {
+        let (app, _cfg) = setup_app_with_modes(
+            crate::provider::ProviderBridgeMode::Stub,
+            "request-sign-production",
+        )
+        .await?;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/healthz")
+            .body(Body::empty())?;
+        let resp = app.clone().oneshot(req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_response(resp).await;
+        assert_eq!(body["adapter"]["mode"], "request-sign-production");
+        assert_eq!(body["adapter"]["adapter"], "request_sign_production_v1");
+        assert_eq!(
+            body["adapter"]["supported_actions"][0]["action"],
+            "request_sign"
+        );
+        assert_eq!(body["adapter"]["supported_actions"][0]["status"], "shipped");
         Ok(())
     }
 
@@ -2459,6 +2571,201 @@ mod tests {
         );
         assert_eq!(body["data"]["result"]["adapter"]["outcome"], "signed");
         assert!(!body.to_string().contains("stub-secret-material"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn execute_uses_request_sign_production_adapter_without_leaking_plaintext(
+    ) -> anyhow::Result<()> {
+        let (app, cfg) = setup_app_with_modes(
+            crate::provider::ProviderBridgeMode::Stub,
+            "request-sign-production",
+        )
+        .await?;
+        let id = create_request_for_action(
+            &app,
+            &cfg,
+            "request_sign",
+            "bw://vault/item/login",
+            "request_sign",
+            "https://example.com/sign",
+            "sign outbound request in production mode",
+        )
+        .await?;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "request_sign",
+                    "target": "https://example.com/sign"
+                })
+                .to_string(),
+            ))?;
+
+        let resp = app.clone().oneshot(exec_req).await?;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_response(resp).await;
+        assert_eq!(
+            body["data"]["result"]["adapter"]["adapter"],
+            "request_sign_production_v1"
+        );
+        assert_eq!(body["data"]["result"]["adapter"]["outcome"], "signed");
+        assert_eq!(body["data"]["result"]["masked"]["action"], "request_sign");
+        assert_eq!(
+            body["data"]["result"]["masked"]["target"],
+            "https://example.com/sign"
+        );
+        assert_eq!(body["data"]["result"]["policy"]["outcome"], "step_up");
+        assert!(body["data"]["result"]["adapter"]["signature_ref_masked"]
+            .as_str()
+            .expect("signature ref mask")
+            .starts_with("sig****"));
+        assert!(!body.to_string().contains("stub-secret-material"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn request_sign_production_adapter_audits_success_and_failure_without_plaintext(
+    ) -> anyhow::Result<()> {
+        let (app, cfg) = setup_app_with_modes(
+            crate::provider::ProviderBridgeMode::Stub,
+            "request-sign-production",
+        )
+        .await?;
+        let id = create_request_for_action(
+            &app,
+            &cfg,
+            "request_sign",
+            "bw://vault/item/login",
+            "request_sign",
+            "https://example.com/sign",
+            "audit request-sign production mode",
+        )
+        .await?;
+
+        let approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let approve_resp = app.clone().oneshot(approve_req).await?;
+        let approve_json = json_response(approve_resp).await;
+        let token = approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("capability token");
+
+        let exec_success_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": id,
+                    "capability_token": token,
+                    "action": "request_sign",
+                    "target": "https://example.com/sign"
+                })
+                .to_string(),
+            ))?;
+        let exec_success_resp = app.clone().oneshot(exec_success_req).await?;
+        assert_eq!(exec_success_resp.status(), StatusCode::OK);
+
+        let failed_id = create_request_for_action(
+            &app,
+            &cfg,
+            "request_sign",
+            "bw://vault/item/login",
+            "request_sign",
+            "https://example.com/not-sign",
+            "audit failed request-sign production mode",
+        )
+        .await?;
+
+        let failed_approve_req = Request::builder()
+            .method("POST")
+            .uri(format!("/v1/requests/{failed_id}/approve"))
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let failed_approve_resp = app.clone().oneshot(failed_approve_req).await?;
+        let failed_approve_json = json_response(failed_approve_resp).await;
+        let failed_token = failed_approve_json["data"]["capability_token"]
+            .as_str()
+            .expect("failed capability token");
+
+        let exec_failed_req = Request::builder()
+            .method("POST")
+            .uri("/v1/execute")
+            .header("content-type", "application/json")
+            .header("x-api-key", &cfg.client_api_key)
+            .body(Body::from(
+                json!({
+                    "id": failed_id,
+                    "capability_token": failed_token,
+                    "action": "request_sign",
+                    "target": "https://example.com/not-sign"
+                })
+                .to_string(),
+            ))?;
+        let exec_failed_resp = app.clone().oneshot(exec_failed_req).await?;
+        assert_eq!(exec_failed_resp.status(), StatusCode::BAD_REQUEST);
+        let failed_body = json_response(exec_failed_resp).await;
+        assert_eq!(failed_body["code"], "adapter_target_mismatch");
+        assert!(!failed_body.to_string().contains("stub-secret-material"));
+
+        let audit_req = Request::builder()
+            .method("GET")
+            .uri("/v1/audit?limit=30")
+            .header("x-api-key", &cfg.approver_api_key)
+            .body(Body::empty())?;
+        let audit_resp = app.clone().oneshot(audit_req).await?;
+        assert_eq!(audit_resp.status(), StatusCode::OK);
+        let audit_json = json_response(audit_resp).await;
+        let rows = audit_json["data"].as_array().expect("audit rows");
+
+        let success = rows
+            .iter()
+            .find(|row| {
+                row["action"] == "request.adapter_succeeded" && row["request_id"] == id.as_str()
+            })
+            .expect("success audit row");
+        assert_eq!(success["details"]["adapter"], "request_sign_production_v1");
+        assert_eq!(success["details"]["mode"], "request-sign-production");
+        assert_eq!(success["details"]["action"], "request_sign");
+        assert_eq!(success["details"]["target"], "https://example.com/sign");
+        assert_eq!(success["details"]["policy"]["outcome"], "step_up");
+        assert!(!success.to_string().contains("stub-secret-material"));
+
+        let failure = rows
+            .iter()
+            .find(|row| {
+                row["action"] == "request.adapter_failed" && row["request_id"] == failed_id.as_str()
+            })
+            .expect("failure audit row");
+        assert_eq!(failure["details"]["adapter"], "request_sign_production_v1");
+        assert_eq!(failure["details"]["mode"], "request-sign-production");
+        assert_eq!(failure["details"]["code"], "adapter_target_mismatch");
+        assert_eq!(failure["details"]["action"], "request_sign");
+        assert_eq!(failure["details"]["target"], "https://example.com/not-sign");
+        assert_eq!(failure["details"]["policy"]["outcome"], "step_up");
+        assert!(!failure.to_string().contains("stub-secret-material"));
         Ok(())
     }
 
@@ -3267,14 +3574,7 @@ mod tests {
                     crate::provider::ProviderRuntime::stub()
                 }
             }),
-            adapter: Arc::new(match downgraded_cfg.execution_adapter_mode {
-                crate::adapter::ExecutionAdapterMode::Off => {
-                    crate::adapter::ExecutionAdapterRuntime::off()
-                }
-                crate::adapter::ExecutionAdapterMode::Stub => {
-                    crate::adapter::ExecutionAdapterRuntime::stub()
-                }
-            }),
+            adapter: execution_adapter_runtime(&downgraded_cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
         };
@@ -3336,7 +3636,7 @@ mod tests {
             db: Arc::new(pool),
             cfg: Arc::clone(&cfg),
             provider: Arc::new(crate::provider::ProviderRuntime::off()),
-            adapter: Arc::new(crate::adapter::ExecutionAdapterRuntime::off()),
+            adapter: execution_adapter_runtime(&cfg),
             rate_state: Arc::new(Mutex::new(HashMap::new())),
             identity_replay_cache: identity::new_replay_cache(),
         };
@@ -3963,14 +4263,22 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn request_sign_node_to_node_flow_keeps_transcripts_secret_free() -> anyhow::Result<()>
-        {
+        async fn request_sign_production_node_to_node_flow_keeps_transcripts_secret_free(
+        ) -> anyhow::Result<()> {
             let outcome = run_request_sign_node_to_node_happy_path().await?;
 
             assert_eq!(outcome.execute_result["status"], 200);
             assert_eq!(
                 outcome.execute_result["body"]["data"]["result"]["adapter"]["adapter"],
-                "request_sign_stub"
+                "request_sign_production_v1"
+            );
+            assert_eq!(
+                outcome.execute_result["body"]["data"]["result"]["masked"]["action"],
+                "request_sign"
+            );
+            assert_eq!(
+                outcome.execute_result["body"]["data"]["result"]["policy"]["outcome"],
+                "step_up"
             );
             assert_secret_free(&outcome.client_stdout, &outcome.fixture_secret);
             assert_secret_free(&outcome.approver_stdout, &outcome.fixture_secret);

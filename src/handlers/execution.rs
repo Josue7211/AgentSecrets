@@ -12,6 +12,7 @@ use crate::{
     err,
     identity::{execute_identity_guard, verify_headers, IdentityExpectations, IdentitySummary},
     now_unix, ok,
+    policy::PolicySummary,
     provider::SecretProvider,
     sqlite_datetime_to_unix, token_hash, ApiError, ApiResponse, AppState, ExecuteBody,
     ExecuteLookupRow,
@@ -43,6 +44,21 @@ fn parse_identity_summary(
     })
 }
 
+fn parse_policy_summary(
+    outcome: String,
+    risk_score: i64,
+    environment: String,
+    reasons_json: String,
+) -> PolicySummary {
+    let reasons = serde_json::from_str::<Vec<String>>(&reasons_json).unwrap_or_default();
+    PolicySummary {
+        outcome,
+        risk_score,
+        environment,
+        reasons,
+    }
+}
+
 pub(crate) async fn execute_request(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -70,6 +86,7 @@ pub(crate) async fn execute_request(
     let row: Option<ExecuteLookupRow> = sqlx::query_as(
         "SELECT status, action, target, secret_ref, capability_hash, capability_expires_at,
                 capability_request_id, capability_action, capability_target, capability_issued_at,
+                policy_outcome, policy_risk_score, policy_environment, policy_reasons,
                 identity_status, identity_mode, identity_runtime_id, identity_host_id,
                 identity_adapter_id, identity_verified_at
          FROM secret_broker_requests
@@ -87,7 +104,11 @@ pub(crate) async fn execute_request(
         )
     })?;
 
-    let Some((
+    let Some(row) = row else {
+        return Err(err(StatusCode::NOT_FOUND, "not_found", "Request not found"));
+    };
+
+    let ExecuteLookupRow {
         status,
         action,
         target,
@@ -98,16 +119,17 @@ pub(crate) async fn execute_request(
         capability_action,
         capability_target,
         capability_issued_at,
+        policy_outcome,
+        policy_risk_score,
+        policy_environment,
+        policy_reasons,
         identity_status,
         identity_mode,
         identity_runtime_id,
         identity_host_id,
         identity_adapter_id,
         identity_verified_at,
-    )) = row
-    else {
-        return Err(err(StatusCode::NOT_FOUND, "not_found", "Request not found"));
-    };
+    } = row;
 
     if status != "approved" {
         return Err(err(
@@ -137,6 +159,10 @@ pub(crate) async fn execute_request(
         &headers,
         IdentityExpectations {
             action: expected_action,
+            adapter_id: crate::identity::adapter_id_for_action_in_mode(
+                expected_action,
+                state.cfg.execution_adapter_mode,
+            ),
         },
         now_unix(),
         &state.identity_replay_cache,
@@ -167,6 +193,12 @@ pub(crate) async fn execute_request(
         identity_host_id,
         identity_adapter_id,
         identity_verified_at,
+    );
+    let stored_policy = parse_policy_summary(
+        policy_outcome.unwrap_or_else(|| "allow".to_string()),
+        policy_risk_score.unwrap_or_default(),
+        policy_environment.unwrap_or_else(|| "unknown".to_string()),
+        policy_reasons.unwrap_or_else(|| "[]".to_string()),
     );
 
     let Some(stored_hash) = capability_hash else {
@@ -450,6 +482,13 @@ pub(crate) async fn execute_request(
             "secret_ref_masked": resolved.secret_ref_masked,
         })
     });
+    let adapter_mode = match state.cfg.execution_adapter_mode {
+        crate::adapter::ExecutionAdapterMode::Off => "off",
+        crate::adapter::ExecutionAdapterMode::Stub => "stub",
+        crate::adapter::ExecutionAdapterMode::RequestSignProduction => "request-sign-production",
+    };
+    let adapter_id =
+        crate::identity::adapter_id_for_action_in_mode(&action, state.cfg.execution_adapter_mode);
 
     let adapter_result = match state.cfg.execution_adapter_mode {
         crate::adapter::ExecutionAdapterMode::Off => None,
@@ -460,7 +499,14 @@ pub(crate) async fn execute_request(
                     &auth_ctx.key_fingerprint,
                     "request.adapter_failed",
                     Some(&body.id),
-                    &json!({ "code": "adapter_provider_missing" }),
+                    &json!({
+                        "adapter": adapter_id,
+                        "mode": adapter_mode,
+                        "code": "adapter_provider_missing",
+                        "action": expected_action,
+                        "target": expected_target,
+                        "policy": stored_policy.clone(),
+                    }),
                 )
                 .await;
 
@@ -485,10 +531,10 @@ pub(crate) async fn execute_request(
                         Some(&body.id),
                         &json!({
                             "adapter": masked.adapter,
-                            "mode": match state.cfg.execution_adapter_mode {
-                                crate::adapter::ExecutionAdapterMode::Off => "off",
-                                crate::adapter::ExecutionAdapterMode::Stub => "stub",
-                            },
+                            "mode": adapter_mode,
+                            "action": expected_action,
+                            "target": expected_target,
+                            "policy": stored_policy.clone(),
                         }),
                     )
                     .await;
@@ -517,7 +563,14 @@ pub(crate) async fn execute_request(
                         &auth_ctx.key_fingerprint,
                         "request.adapter_failed",
                         Some(&body.id),
-                        &json!({ "code": code }),
+                        &json!({
+                            "adapter": adapter_id,
+                            "mode": adapter_mode,
+                            "code": code,
+                            "action": expected_action,
+                            "target": expected_target,
+                            "policy": stored_policy.clone(),
+                        }),
                     )
                     .await;
 
@@ -540,6 +593,7 @@ pub(crate) async fn execute_request(
         },
         "provider": provider_result,
         "adapter": adapter_result,
+        "policy": stored_policy,
         "identity": current_identity,
         "note": "no plaintext secrets returned",
     });

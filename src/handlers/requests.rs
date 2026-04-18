@@ -160,7 +160,13 @@ pub(crate) async fn create_request(
     let identity = match verify_headers(
         &state.cfg,
         &headers,
-        IdentityExpectations { action },
+        IdentityExpectations {
+            action,
+            adapter_id: crate::identity::adapter_id_for_action_in_mode(
+                action,
+                state.cfg.execution_adapter_mode,
+            ),
+        },
         now_unix(),
         &state.identity_replay_cache,
     ) {

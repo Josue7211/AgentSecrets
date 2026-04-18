@@ -14,6 +14,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Trusted-side provider bridge contract exists in stub form behind config.
 - Provider resolution failures are masked and do not return plaintext.
 - A sanctioned trusted execution adapter registry exists in stub form behind config.
+- A bounded production `request_sign` adapter exists behind `SECRET_BROKER_EXECUTION_ADAPTER_MODE=request-sign-production`; it talks to an explicit trusted-side HTTP signing service via `SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL`, returns only masked output, and does not claim browser automation.
 - Unsupported adapter action or target context fails closed.
 - Adapter success and failure paths are audited without plaintext.
 - Approval responses expose masked review payloads only.
@@ -21,7 +22,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Local Loop 5 node-to-node harness evidence exists for the stubbed V2 flow.
 - Local node-to-node harness evidence exists for the trusted-input ingress path in addition to the stubbed V2 request flow.
 - The local supported-host helper path has tested transcript and log redaction coverage for seeded canary and provider-ref echo cases.
-- The local supported-host helper path has sanctioned adapter-path coverage for `password_fill`, `request_sign`, and `credential_handoff`.
+- The local supported-host helper path has sanctioned adapter-path coverage for `password_fill` and `credential_handoff` in stub mode, plus `request_sign` in production mode.
 - Policy decisions now account for actor, environment, and risk in addition to action and target.
 - Supported local identity paths can verify runtime, host, and adapter claims in stub attestation mode.
 - The documented OpenClaw host path can now use host-specific signed identity envelopes with same-process replay rejection and host/runtime binding checks for the claimed host id.
@@ -40,7 +41,9 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 - Universal transcript-safe host integrations.
 - Universal transcript and log redaction across arbitrary runtimes.
 - Chatbox or session-history redaction across external runtimes.
-- Real browser-fill or signing adapters beyond the current stubbed sanctioned-adapter contract.
+- Real browser-fill adapters or additional signing adapters beyond the bounded `request_sign` production path.
+- Additional browser-fill adapters beyond the preview `password_fill` path.
+- Additional signing adapters beyond the bounded `request_sign` production path.
 - Production Bitwarden mediation implemented in this repo.
 - End-to-end node-to-node verification across real host integrations.
 - Supported-host certification for Claude, Codex, or arbitrary external runtime.
@@ -51,6 +54,7 @@ This document is the source of truth for what AgentSecrets currently guarantees,
 AgentSecrets currently provides broker-level no-plaintext-response guarantees. It does **not** yet provide a complete end-to-end zero-trust secret-use system for external host apps.
 For supported hosts that use the trusted-input session flow, the repo now also provides a narrow ingress contract where the agent-visible path only handles broker-issued opaque refs.
 For the local supported-host helper path exercised by the harness, the repo also provides a narrow redaction contract for untrusted transcript and log sinks plus sanctioned adapter-path coverage.
+That coverage now splits by adapter mode: `password_fill` and `credential_handoff` remain preview-only stub paths, while `request_sign` is covered by the bounded production adapter mode.
 For the preview OpenClaw host path, the repo now also provides host-specific evidence for trusted-input ingress, transcript/log redaction, approval masking, and adapter execution without plaintext leakage.
 For that same preview OpenClaw path, the broker can now require a deployment-wide `host-signed` runtime identity baseline with host-specific keys, one-time attestation envelopes, host/runtime pair checks, and same-process replay rejection for the claimed host id.
 Stronger per-host tiers above a weaker deployment baseline are not a supported secure shape in this repo. Startup rejects that configuration.

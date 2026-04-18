@@ -34,7 +34,7 @@ Call V2 real only when every Loop 0 through Loop 5 line below is backed by curre
 | Loop 0 | repo truth still says broker-level guarantees only | `bash scripts/check-security-claims.sh` |
 | Loop 1 | raw secret ingress stays rejected and masked | `cargo test --all-targets --all-features -- --nocapture` |
 | Loop 2 | trusted-side provider bridge stays bounded to the documented contract | `cargo test --all-targets --all-features -- --nocapture` |
-| Loop 3 | only the documented stub trusted execution adapter path is claimed | `cargo test --all-targets --all-features -- --nocapture` |
+| Loop 3 | only the documented stub preview adapter paths are claimed for `password_fill` and `credential_handoff`; `request_sign` ships in its separate production mode | `cargo test --all-targets --all-features -- --nocapture` |
 | Loop 4 | capability action, target, and TTL binding stay fail-closed | `cargo test --all-targets --all-features -- --nocapture` |
 | Loop 5 | node-to-node harness remains green and redacted | `bash scripts/run-e2e-harness.sh` |
 
@@ -83,7 +83,8 @@ The gate is the release truth for [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS
 | Broker API with opaque refs, masked responses, role separation, and one-time capabilities | shipped | Supported V2 contract |
 | Human approval flow with masked review payload and action/target binding | shipped | Supported V2 contract |
 | Stub trusted-side provider bridge behind `SECRET_BROKER_PROVIDER_BRIDGE_MODE=stub` | preview | Contract validation only, not production Bitwarden mediation |
-| Stub trusted execution adapter behind `SECRET_BROKER_EXECUTION_ADAPTER_MODE=stub` | preview | Contract validation only, not real browser or host execution |
+| Stub trusted execution adapter paths behind `SECRET_BROKER_EXECUTION_ADAPTER_MODE=stub` | preview | Contract validation only, not real browser or host execution; `password_fill` and `credential_handoff` remain preview-only |
+| Bounded `request_sign` production adapter behind `SECRET_BROKER_EXECUTION_ADAPTER_MODE=request-sign-production` | shipped | `bash scripts/run-adapter-e2e.sh` | Request signing only; requires `SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL`; no browser automation |
 | Local node-to-node harness artifacts under `target/e2e-artifacts/` | shipped | Required release evidence for the stubbed V2 path |
 | External host transcript safety for OpenClaw, Claude, Codex, or other runtimes | unsupported | Do not claim end-to-end transcript safety |
 | Direct plaintext secret ingress to `POST /v1/requests` | unsupported | Rejected path, never supported |
@@ -107,7 +108,7 @@ Use this table verbatim or keep release notes materially equivalent.
 | Claim line | Status | Evidence | Required caveat |
 | --- | --- | --- | --- |
 | Supported hosts can use broker-owned trusted-input sessions to keep plaintext out of the agent-visible request path | allowed | `cargo test --all-targets --all-features -- --nocapture` | This is still bounded to the hosts and paths listed in [docs/SUPPORTED_HOSTS.md](docs/SUPPORTED_HOSTS.md) |
-| The local helper harness path supports masked `password_fill`, `request_sign`, and `credential_handoff` flows without exposing plaintext to helper transcripts or artifacts | allowed | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; not a blanket claim for external runtimes |
+| The local helper harness path supports masked `password_fill`, `request_sign`, and `credential_handoff` flows without exposing plaintext to helper transcripts or artifacts | allowed | `cargo test --all-targets --all-features -- --nocapture`, `bash scripts/run-e2e-harness.sh` | Repo-owned certification only; `request_sign` uses the bounded production adapter mode while `password_fill` and `credential_handoff` remain preview-only |
 | OpenClaw-style HTTP hosts are fully certified for V3 end-to-end claims | blocked | `bash scripts/run-openclaw-e2e.sh`, `bash scripts/check-v3-ship-gate.sh`, `bash scripts/check-external-host-ship-gate.sh` | Keep OpenClaw preview until Task 2 adds host-specific identity evidence |
 | Claude, Codex, or arbitrary external runtimes are certified transcript-safe V3 hosts | blocked | none in this repo | Remove this line from V3 release notes |
 | Production browser automation or production provider mediation ships in V3 | blocked | none in this repo | Keep adapter claims at the documented helper-path contract |
@@ -165,6 +166,7 @@ V4 release authority is the combination of:
 | --- | --- | --- | --- |
 | Broker policy decisions now explain action, target, actor, environment, and risk | allowed | policy tests plus full suite | Broker-owned policy claim only |
 | Local helper paths can verify runtime, host, and adapter identity in stub mode | allowed | identity tests | Local stub-attestation path only |
+| Bounded request_sign production adapter now ships behind explicit mode | allowed | `bash scripts/run-adapter-e2e.sh`, `cargo test --all-targets --all-features -- --nocapture` | Only request_sign is production-backed; it requires `SECRET_BROKER_REQUEST_SIGN_ADAPTER_URL`; password_fill and credential_handoff remain preview |
 | OpenClaw preview paths can require host-specific signed identity with same-process replay and downgrade protection | allowed | host-signed identity tests | Keep OpenClaw preview until the host matrix promotes it; do not turn this into a blanket external-runtime trust claim or independent host discovery claim |
 | Operators can verify audit-chain integrity and export redact-safe forensic bundles | allowed | forensic tests | Local SQLite evidence path only |
 | Rotation/recovery discipline and adversarial verification are part of release gating | allowed | drill script plus adversarial suite | Claim strength depends on current evidence |

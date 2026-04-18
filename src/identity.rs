@@ -98,6 +98,7 @@ pub(crate) struct IdentityError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IdentityExpectations<'a> {
     pub(crate) action: &'a str,
+    pub(crate) adapter_id: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,11 +154,17 @@ pub(crate) fn configured_mode(cfg: &Config) -> IdentityVerificationMode {
     cfg.identity_verification_mode
 }
 
-pub(crate) fn adapter_id_for_action(action: &str) -> &'static str {
-    match action {
-        "password_fill" => "password_fill_stub",
-        "request_sign" => "request_sign_stub",
-        "credential_handoff" => "credential_handoff_stub",
+pub(crate) fn adapter_id_for_action_in_mode(
+    action: &str,
+    mode: crate::adapter::ExecutionAdapterMode,
+) -> &'static str {
+    match (action, mode) {
+        ("password_fill", _) => "password_fill_stub",
+        ("request_sign", crate::adapter::ExecutionAdapterMode::RequestSignProduction) => {
+            "request_sign_production_v1"
+        }
+        ("request_sign", _) => "request_sign_stub",
+        ("credential_handoff", _) => "credential_handoff_stub",
         _ => "unsupported",
     }
 }
@@ -236,8 +243,7 @@ fn ensure_expected_adapter(
     claims: &IdentityClaims,
     expected: IdentityExpectations<'_>,
 ) -> Result<(), IdentityError> {
-    let expected_adapter = adapter_id_for_action(expected.action);
-    if expected_adapter == "unsupported" || claims.adapter_id != expected_adapter {
+    if expected.adapter_id == "unsupported" || claims.adapter_id != expected.adapter_id {
         return Err(IdentityError {
             code: "identity_mismatch",
             message: "Identity adapter claim does not match the requested action",
@@ -538,7 +544,7 @@ pub(crate) fn execute_identity_guard(
 #[cfg(test)]
 mod tests {
     use super::{
-        adapter_id_for_action, parse_identity_verification_mode, sign_host_identity_claim,
+        adapter_id_for_action_in_mode, parse_identity_verification_mode, sign_host_identity_claim,
         sign_identity_claim, IdentityVerificationMode,
     };
 
@@ -569,11 +575,44 @@ mod tests {
 
     #[test]
     fn adapter_lookup_matches_known_actions() {
-        assert_eq!(adapter_id_for_action("password_fill"), "password_fill_stub");
-        assert_eq!(adapter_id_for_action("request_sign"), "request_sign_stub");
         assert_eq!(
-            adapter_id_for_action("credential_handoff"),
+            adapter_id_for_action_in_mode(
+                "password_fill",
+                crate::adapter::ExecutionAdapterMode::Stub
+            ),
+            "password_fill_stub"
+        );
+        assert_eq!(
+            adapter_id_for_action_in_mode(
+                "request_sign",
+                crate::adapter::ExecutionAdapterMode::Stub
+            ),
+            "request_sign_stub"
+        );
+        assert_eq!(
+            adapter_id_for_action_in_mode(
+                "credential_handoff",
+                crate::adapter::ExecutionAdapterMode::Stub
+            ),
             "credential_handoff_stub"
+        );
+    }
+
+    #[test]
+    fn adapter_lookup_respects_execution_mode() {
+        assert_eq!(
+            adapter_id_for_action_in_mode(
+                "request_sign",
+                crate::adapter::ExecutionAdapterMode::RequestSignProduction,
+            ),
+            "request_sign_production_v1"
+        );
+        assert_eq!(
+            adapter_id_for_action_in_mode(
+                "request_sign",
+                crate::adapter::ExecutionAdapterMode::Stub,
+            ),
+            "request_sign_stub"
         );
     }
 
